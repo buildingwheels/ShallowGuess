@@ -3,7 +3,7 @@
 
 # Shallow Guess
 
-A neural-network-based chess engine.
+A chess engine powered by neural networks.
 
 ## Board Representation
 
