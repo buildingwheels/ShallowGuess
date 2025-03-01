@@ -1,3 +1,6 @@
+
+![logo](https://github.com/user-attachments/assets/ac8030d7-21a3-47c5-afa8-9ecc00883eb2)
+
 # Shallow Guess
 
 A neural-network-based chess engine.
