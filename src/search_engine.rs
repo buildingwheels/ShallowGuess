@@ -14,7 +14,7 @@ use crate::types::{
     SearchPly, SortableChessMove, EMPTY_CHESS_MOVE,
 };
 use crate::uci::print_info;
-use crate::util::search_depth_sqrt;
+use crate::util::u16_sqrt;
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -34,6 +34,12 @@ const HISTORY_DECAY_INTERVAL: NodeCount = 1023;
 const KILLER_COUNT: usize = 2;
 const KILLER_INDEX_CUTOFF: usize = 0;
 const KILLER_INDEX_RAISE: usize = 1;
+
+const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 5;
+const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
+
+const FUTILITY_PRUNING_MAX_DEPTH: SearchDepth = 7;
+const FUTILITY_PRUNING_MARGINS: [Score; 7] = [0, 200, 400, 600, 800, 1000, 1200];
 
 const IID_MIN_DEPTH: SearchDepth = 7;
 const IID_SEARCH_DEPTH: SearchDepth = 2;
@@ -238,6 +244,26 @@ impl SearchEngine {
             return self.q_search(chess_position, alpha, beta, ply);
         }
 
+        if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
+            let static_eval = chess_position.network.evaluate(chess_position.player);
+
+            if depth < FUTILITY_PRUNING_MAX_DEPTH && static_eval - FUTILITY_PRUNING_MARGINS[depth as usize] > beta {
+                return beta;
+            }
+
+            if depth >= NULL_MOVE_PRUNING_MIN_DEPTH && static_eval >= beta {
+                let saved_enpassant_square = chess_position.make_null_move();
+
+                let scout_score = -self.ab_search(chess_position, -beta, 1-beta, false, depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION - 1, ply + 1);
+
+                chess_position.unmake_null_move(saved_enpassant_square);
+
+                if scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
+                    return beta;
+                }
+            }
+        }
+
         if !best_move.is_empty() {
             let saved_state = chess_position.make_move(&best_move);
 
@@ -420,8 +446,8 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
-                let depth_reduction = if !gives_check && depth > 1 {
-                    search_depth_sqrt(depth).min(depth - 1)
+                let depth_reduction = if !gives_check && depth > 1 && sortable_chess_move.reducable {
+                    u16_sqrt(depth).min(depth - 1)
                 } else {
                     0
                 };
@@ -641,6 +667,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move,
                 sort_score,
+                reducable: false,
             });
         }
 
@@ -648,6 +675,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move: counter_move,
                 sort_score: max_exchange_score + 1,
+                reducable: false,
             });
         }
 
@@ -709,6 +737,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move,
                 sort_score: history_score,
+                reducable: true,
             });
         }
 
@@ -716,6 +745,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move: counter_move,
                 sort_score: max_history_score + 3,
+                reducable: false,
             });
         }
 
@@ -723,6 +753,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move: primary_killer_move,
                 sort_score: max_history_score + 2,
+                reducable: false,
             });
         }
 
@@ -730,6 +761,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move: secondary_killer_move,
                 sort_score: max_history_score + 1,
+                reducable: false,
             });
         }
 

@@ -293,6 +293,23 @@ impl ChessPosition {
         }
     }
 
+    pub fn make_null_move(&mut self) -> ChessSquare {
+        self.modify_hash();
+        let saved_enpassant_square = self.enpassant_square;
+        self.enpassant_square = NO_SQUARE;
+        self.player ^= BLACK;
+        self.modify_hash();
+
+        return saved_enpassant_square;
+    }
+
+    pub fn unmake_null_move(&mut self, saved_enpassant_square: ChessSquare) {
+        self.modify_hash();
+        self.enpassant_square = saved_enpassant_square;
+        self.player ^= BLACK;
+        self.modify_hash();
+    }
+
     pub fn make_move(&mut self, chess_move: &ChessMove) -> RecoverablePositionState {
         let saved_enpassant_square = self.enpassant_square;
         let saved_castling_flag = self.castling_flag;

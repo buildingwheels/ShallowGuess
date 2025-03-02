@@ -26,8 +26,6 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Counter Move Heuristics
 - History Heuristics
 - Killer Heuristics
-
-I have removed the following on purpose to have a focus on the application of neural networks:
 - Null Move Pruning
 - Futility Pruning
 
@@ -37,13 +35,13 @@ I have removed the following on purpose to have a focus on the application of ne
 
 ## Evaluation
 - Neural network with single hidden layer
-- Partially quantized (for 1st fully connected layer with incremental updates)
+- Partially quantized (only the 1st fully connected layer which is used for incremental updates)
 
 ## How to Use
 There are 3 trained models under the `resources/models/` folder:
-- `1L-32.pth` (used for initial experiments, around 2000 ELO)
+- `1L-32.pth` (used for experiments, around 2000 ELO)
 - `1L-128.pth` (default, around 2500 ELO)
-- `1L-256.pth` (training in progress)
+- `1L-256.pth` (not ready, training in progress)
 
 The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`:
 - `1L-32.weights`

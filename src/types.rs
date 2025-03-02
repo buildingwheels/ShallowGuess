@@ -55,6 +55,7 @@ pub const EMPTY_CHESS_MOVE: ChessMove = ChessMove {
 pub struct SortableChessMove {
     pub chess_move: ChessMove,
     pub sort_score: Score,
+    pub reducable: bool,
 }
 
 impl PartialEq for SortableChessMove {

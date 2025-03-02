@@ -5,7 +5,7 @@ use crate::def::{
     H2, H3, H4, H5, H6, H7, H8, NO_PIECE, PIECE_TYPE_COUNT, WB, WK, WN, WP, WQ, WR,
 };
 use crate::network::NetworkInputValue;
-use crate::types::{BitBoard, ChessFile, ChessPiece, ChessRank, ChessSquare, SearchDepth};
+use crate::types::{BitBoard, ChessFile, ChessPiece, ChessRank, ChessSquare};
 
 pub type NetworkInputs = Vec<NetworkInputValue>;
 
@@ -52,22 +52,22 @@ pub fn digit_to_char(index: usize) -> char {
 }
 
 #[inline(always)]
-pub fn search_depth_sqrt(depth: SearchDepth) -> SearchDepth {
-    if depth <= 1 {
-        return depth;
+pub fn u16_sqrt(value: u16) -> u16 {
+    if value <= 1 {
+        return value;
     }
 
     let mut low = 0;
-    let mut high = depth;
+    let mut high = value;
     let mut result = 0;
 
     while low <= high {
         let mid = (low + high) >> 1;
         let mid_squared = mid * mid;
 
-        if mid_squared == depth {
+        if mid_squared == value {
             return mid;
-        } else if mid_squared < depth {
+        } else if mid_squared < value {
             low = mid + 1;
             result = mid;
         } else {

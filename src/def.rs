@@ -150,5 +150,5 @@ pub const CASTLING_FLAG_WHITE_QUEEN_SIDE: CastlingFlag = 0b0010;
 pub const CASTLING_FLAG_BLACK_KING_SIDE: CastlingFlag = 0b0100;
 pub const CASTLING_FLAG_BLACK_QUEEN_SIDE: CastlingFlag = 0b1000;
 
-pub const MATE_SCORE: Score = 100_000;
-pub const TERMINATE_SCORE: Score = 50_000;
+pub const MATE_SCORE: Score = 20_000;
+pub const TERMINATE_SCORE: Score = 10_000;
