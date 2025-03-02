@@ -3,7 +3,7 @@
 
 # Shallow Guess
 
-A chess engine powered by neural networks.
+A chess engine powered by neural networks. Still in early preview, work in progress.
 
 ## Board Representation
 
@@ -16,7 +16,7 @@ A chess engine powered by neural networks.
 
 ## Search Heuristics
 
-- Principal Variance Search
+- Principal Variation Search
 - Iterative Deepening
 - Internal Iterative Deepening
 - Aspiration Window
