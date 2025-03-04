@@ -22,7 +22,7 @@ class ShallowGuessNetwork(nn.Module):
         return x
 
     def pub_name(self):
-        return f"1L-{self.hidden_layer_size}"
+        return f"1L-{self.hidden_layer_size}-RELU"
 
 
 def load_model(model_path):

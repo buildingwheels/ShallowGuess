@@ -202,6 +202,7 @@ impl SearchEngine {
         }
 
         let safety_check = chess_position.white_all_bitboard * chess_position.black_all_bitboard;
+        let hash_age = chess_position.full_move_count;
 
         let mut best_move = EMPTY_CHESS_MOVE;
         let mut valid_move_count = 0;
@@ -229,7 +230,10 @@ impl SearchEngine {
                         }
                     }
                     HashFlag::Exact => {
-                        return entry.score;
+                        let score = entry.score;
+                        if score.abs() < TERMINATE_SCORE {
+                            return score;
+                        }
                     }
                 }
             }
@@ -245,7 +249,7 @@ impl SearchEngine {
         }
 
         if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
-            let static_eval = chess_position.network.evaluate(chess_position.player);
+            let static_eval = chess_position.get_static_score();
 
             if depth < FUTILITY_PRUNING_MAX_DEPTH && static_eval - FUTILITY_PRUNING_MARGINS[depth as usize] > beta {
                 return beta;
@@ -288,6 +292,7 @@ impl SearchEngine {
                     safety_check,
                     score: beta,
                     depth,
+                    hash_age,
                     flag: HashFlag::LowBound,
                     chess_move: best_move,
                 });
@@ -354,16 +359,22 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
+                let depth_reduction = if !gives_check && depth > 1 && sortable_chess_move.reducable {
+                    u16_sqrt(depth).min(depth - 1)
+                } else {
+                    0
+                };
+
                 score = -self.ab_search(
                     chess_position,
                     -alpha - 1,
                     -alpha,
                     gives_check,
-                    depth - 1,
+                    depth - depth_reduction - 1,
                     ply + 1,
                 );
 
-                if score > alpha && score < beta {
+                if score > alpha && (score < beta || depth_reduction != 0) {
                     score = -self.ab_search(
                         chess_position,
                         -beta,
@@ -388,6 +399,7 @@ impl SearchEngine {
                         * chess_position.black_all_bitboard,
                     score: beta,
                     depth,
+                    hash_age,
                     flag: HashFlag::LowBound,
                     chess_move,
                 });
@@ -486,6 +498,7 @@ impl SearchEngine {
                         * chess_position.black_all_bitboard,
                     score: beta,
                     depth,
+                    hash_age,
                     flag: HashFlag::LowBound,
                     chess_move,
                 });
@@ -543,18 +556,20 @@ impl SearchEngine {
         if alpha_raised {
             self.update_hash(&TableEntry {
                 key: chess_position.hash_key,
-                safety_check: safety_check,
+                safety_check,
                 score: alpha,
                 depth,
+                hash_age,
                 flag: HashFlag::Exact,
                 chess_move: best_move,
             });
-        } else {
+        } else if !best_move.is_empty() {
             self.update_hash(&TableEntry {
                 key: chess_position.hash_key,
-                safety_check: safety_check,
+                safety_check,
                 score: alpha,
                 depth,
+                hash_age,
                 flag: HashFlag::HighBound,
                 chess_move: best_move,
             });
@@ -581,7 +596,7 @@ impl SearchEngine {
             return alpha;
         }
 
-        let static_eval = chess_position.network.evaluate(chess_position.player);
+        let static_eval = chess_position.get_static_score();
 
         if static_eval >= beta {
             return beta;
@@ -667,7 +682,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move,
                 sort_score,
-                reducable: false,
+                reducable: sort_score < 0,
             });
         }
 
@@ -888,6 +903,7 @@ impl SearchEngine {
             safety_check: chess_position.white_all_bitboard * chess_position.black_all_bitboard,
             score: chess_move_count as Score,
             depth,
+            hash_age: 0,
             flag: HashFlag::Exact,
             chess_move: EMPTY_CHESS_MOVE,
         });

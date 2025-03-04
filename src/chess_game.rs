@@ -29,7 +29,11 @@ impl ChessGame {
     }
 
     pub fn set_hash_size(&mut self, hash_size: usize) {
-        self.search_engine.set_hash_size(hash_size);
+        if hash_size & (hash_size - 1) != 0 {
+            println!("Size {} not supported, needs to be power of 2", hash_size);
+        } else {
+            self.search_engine.set_hash_size(hash_size);
+        }
     }
 
     pub fn make_move(&mut self, chess_move: &ChessMove) {

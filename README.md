@@ -28,25 +28,26 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Killer Heuristics
 - Null Move Pruning
 - Futility Pruning
+- Check Extensions
 
 ## Hashing & Transposition
 - Zobrist Hashing
-- Always-replacing Transposition Table
+- Depth-preferred Transposition Table + Always-replacing Transposition Table
 
 ## Evaluation
 - Neural network with single hidden layer
-- Partially quantized (only the 1st fully connected layer which is used for incremental updates)
+- Partially quantized (only for the 1st fully connected layer which is used for incremental updates)
 
 ## How to Use
 There are 3 trained models under the `resources/models/` folder:
-- `1L-32.pth` (used for experiments, around 2000 ELO)
-- `1L-128.pth` (default, around 2500 ELO)
-- `1L-256.pth` (not ready, training in progress)
+- `1L-32.pth`
+- `1L-128.pth`
+- `1L-256.pth` (default)
 
 The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`:
 - `1L-32.weights`
 - `1L-128.weights`
-- `1L-256.weights`
+- `1L-256.weights` (default)
 
 You can modify `build.rs` to load one of the three trained models:
 ```rust

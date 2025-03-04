@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Write;
 
 fn main() {
-    load_weights(768, 128);
+    load_weights(768, 256);
 }
 
 fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {

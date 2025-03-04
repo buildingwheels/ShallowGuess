@@ -293,6 +293,10 @@ impl ChessPosition {
         }
     }
 
+    pub fn get_static_score(&self) -> Score {
+        return self.network.evaluate(self.player);
+    }
+
     pub fn make_null_move(&mut self) -> ChessSquare {
         self.modify_hash();
         let saved_enpassant_square = self.enpassant_square;

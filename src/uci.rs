@@ -1,14 +1,14 @@
 use crate::chess_game::ChessGame;
 use crate::chess_position::ChessPosition;
 use crate::def::{
-    BK, BP, C1, C8, CREATE_ENPASSANT_DELTA, E1, E8, G1, G8, MATE_SCORE, NO_PIECE, TERMINATE_SCORE,
-    WHITE, WK, WP,
+    BK, BP, C1, C8, CREATE_ENPASSANT_DELTA, E1, E8, G1, G8, MATE_SCORE, NO_PIECE, TERMINATE_SCORE, WHITE, WK, WP
 };
 use crate::engine_info::{AUTHOR, ENGINE_NAME, ENGINE_VERSION};
 use crate::fen::fen_str_constants::{SPLITTER, START_POS};
 use crate::fen::{
     format_chess_move, get_chess_square_from_chars, get_promotion_chess_piece_from_char,
 };
+use crate::network_weights::HIDDEN_LAYER_SIZE;
 use crate::search_engine::SearchInfo;
 use crate::time::{calculate_optimal_time_for_next_move, TimeInfo};
 use crate::transpos::{DEFAULT_HASH_SIZE_MB, MAX_HASH_SIZE_MB, MIN_HASH_SIZE_MB};
@@ -70,7 +70,7 @@ pub fn process_command(
 }
 
 fn print_engine_info() {
-    println!("id name {} {}", ENGINE_NAME, ENGINE_VERSION);
+    println!("id name {} {}_{}", ENGINE_NAME, ENGINE_VERSION, HIDDEN_LAYER_SIZE);
     println!("id author {}", AUTHOR);
     println!(
         "option name Hash type spin default {} min {} max {}",

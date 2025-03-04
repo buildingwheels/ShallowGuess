@@ -1,4 +1,4 @@
-use crate::def::{CHESS_SQUARE_COUNT, MATE_SCORE, WHITE};
+use crate::def::{CHESS_SQUARE_COUNT, TERMINATE_SCORE, WHITE};
 use crate::network_weights::{
     HIDDEN_LAYER_BIASES, HIDDEN_LAYER_SCALING_FACTOR, HIDDEN_LAYER_SIZE,
     HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS, INPUT_LAYER_SIZE, INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS,
@@ -11,7 +11,7 @@ use std::f32::consts::E;
 pub type NetworkInputValue = i32;
 pub type NetworkOutputValue = f32;
 
-const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.00404;
+const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
 
 pub const fn calculate_network_input_layer_index(
     chess_piece: ChessPiece,
@@ -188,8 +188,8 @@ impl Network {
 fn win_probability_to_centi_pawn_score(win_probability: NetworkOutputValue) -> Score {
     (((win_probability.ln() - (1.0 - win_probability).ln()) / CENTI_PAWN_SCORE_SCALING_FACTOR)
         as Score)
-        .min(MATE_SCORE - 1)
-        .max(-MATE_SCORE + 1)
+        .min(TERMINATE_SCORE - 1)
+        .max(-TERMINATE_SCORE + 1)
 }
 
 fn load_default_weights_and_biases(network: &mut Network) {
