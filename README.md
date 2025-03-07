@@ -27,6 +27,7 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - History Heuristics
 - Killer Heuristics
 - Check Extensions
+- Null Move Pruning
 
 ## Hashing & Transposition
 - Zobrist Hashing
@@ -39,19 +40,19 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 ## How to Use
 There are several trained models under the `resources/models/` folder:
 
-These ones were trained with Leaky ReLU and you need to modify `src/network.rs` to use them:
+These ones were trained with Leaky ReLU and you need to modify `src/network.rs` to use them (check git history for leaky relu implementation):
 - `1L-32.pth`
 - `1L-128.pth`
 - `1L-256.pth`
 
-This is currently the default model:
+This is currently the default model training with ReLU:
 - `1L-512.pth`
 
 The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`:
 - `1L-32.weights`
 - `1L-128.weights`
-- `1L-256.weights`
-- `1L-512.weights` (default)
+- `1L-256.weights` (strongest)
+- `1L-512.weights` (current)
 
 You can modify `build.rs` to load one of the three trained models:
 ```rust

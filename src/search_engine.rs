@@ -35,6 +35,9 @@ const KILLER_COUNT: usize = 2;
 const KILLER_INDEX_CUTOFF: usize = 0;
 const KILLER_INDEX_RAISE: usize = 1;
 
+const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 5;
+const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
+
 const IID_MIN_DEPTH: SearchDepth = 7;
 const IID_SEARCH_DEPTH: SearchDepth = 2;
 
@@ -249,6 +252,22 @@ impl SearchEngine {
             return self.q_search(chess_position, alpha, beta, ply);
         }
 
+        if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
+            let static_eval = chess_position.get_static_score();
+
+            if depth >= NULL_MOVE_PRUNING_MIN_DEPTH && static_eval >= beta {
+                let saved_enpassant_square = chess_position.make_null_move();
+
+                let scout_score = -self.ab_search(chess_position, -beta, 1-beta, false, depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION - 1, ply + 1);
+
+                chess_position.unmake_null_move(saved_enpassant_square);
+
+                if scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
+                    return beta;
+                }
+            }
+        }
+
         if !best_move.is_empty() {
             let saved_state = chess_position.make_move(&best_move);
 
@@ -340,22 +359,16 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
-                let depth_reduction = if !gives_check && depth > 1 && sortable_chess_move.reducable {
-                    u16_sqrt(depth).min(depth - 1)
-                } else {
-                    0
-                };
-
                 score = -self.ab_search(
                     chess_position,
                     -alpha - 1,
                     -alpha,
                     gives_check,
-                    depth - depth_reduction - 1,
+                    depth - 1,
                     ply + 1,
                 );
 
-                if score > alpha && (score < beta || depth_reduction != 0) {
+                if score > alpha && score < beta {
                     score = -self.ab_search(
                         chess_position,
                         -beta,
