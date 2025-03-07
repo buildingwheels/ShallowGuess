@@ -1,8 +1,8 @@
 use crate::def::{CHESS_SQUARE_COUNT, TERMINATE_SCORE, WHITE};
 use crate::network_weights::{
-    HIDDEN_LAYER_BIASES, HIDDEN_LAYER_SCALING_FACTOR, HIDDEN_LAYER_SIZE,
+    COMMON_SCALING_FACTOR, HIDDEN_LAYER_BIASES, HIDDEN_LAYER_SIZE,
     HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS, INPUT_LAYER_SIZE, INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS,
-    OUTPUT_BIAS, OUTPUT_LAYER_SCALING_FACTOR,
+    OUTPUT_BIAS,
 };
 use crate::types::{ChessPiece, ChessSquare, Player, Score};
 use crate::util::{FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
@@ -21,12 +21,8 @@ pub const fn calculate_network_input_layer_index(
 }
 
 #[inline(always)]
-fn leaky_relu(x: NetworkOutputValue) -> NetworkOutputValue {
-    if x >= 0.0 {
-        x
-    } else {
-        x * 0.01
-    }
+fn relu(x: NetworkInputValue) -> NetworkInputValue {
+    x.max(0)
 }
 
 #[inline(always)]
@@ -37,11 +33,11 @@ fn sigmoid(x: NetworkOutputValue) -> NetworkOutputValue {
 pub struct Network {
     transposed_input_layer_to_hidden_layer_weights:
         [[NetworkInputValue; HIDDEN_LAYER_SIZE]; INPUT_LAYER_SIZE],
-    hidden_layer_biases: [NetworkOutputValue; HIDDEN_LAYER_SIZE],
-    hidden_layer_to_output_layer_weights: [NetworkOutputValue; HIDDEN_LAYER_SIZE],
+    hidden_layer_biases: [NetworkInputValue; HIDDEN_LAYER_SIZE],
+    hidden_layer_to_output_layer_weights: [NetworkInputValue; HIDDEN_LAYER_SIZE],
     output_layer_bias: NetworkOutputValue,
 
-    hidden_layer_scaling_factor: NetworkOutputValue,
+    common_scaling_factor: NetworkOutputValue,
 
     white_accumulated_layer: [NetworkInputValue; HIDDEN_LAYER_SIZE],
     black_accumulated_layer: [NetworkInputValue; HIDDEN_LAYER_SIZE],
@@ -52,11 +48,11 @@ impl Network {
         let mut new_network = Self {
             transposed_input_layer_to_hidden_layer_weights: [[0; HIDDEN_LAYER_SIZE];
                 INPUT_LAYER_SIZE],
-            hidden_layer_biases: [0.; HIDDEN_LAYER_SIZE],
-            hidden_layer_to_output_layer_weights: [0.; HIDDEN_LAYER_SIZE],
+            hidden_layer_biases: [0; HIDDEN_LAYER_SIZE],
+            hidden_layer_to_output_layer_weights: [0; HIDDEN_LAYER_SIZE],
             output_layer_bias: 0.,
 
-            hidden_layer_scaling_factor: 0.,
+            common_scaling_factor: 0.,
 
             white_accumulated_layer: [0; HIDDEN_LAYER_SIZE],
             black_accumulated_layer: [0; HIDDEN_LAYER_SIZE],
@@ -112,43 +108,37 @@ impl Network {
     }
 
     pub fn evaluate(&self, player: Player) -> Score {
-        let mut hidden_layer = [0.; HIDDEN_LAYER_SIZE];
+        let mut hidden_layer = [0; HIDDEN_LAYER_SIZE];
 
         if player == WHITE {
             for i in 0..HIDDEN_LAYER_SIZE {
-                hidden_layer[i] = leaky_relu(
-                    self.white_accumulated_layer[i] as NetworkOutputValue
-                        * self.hidden_layer_scaling_factor
-                        + self.hidden_layer_biases[i],
-                );
+                hidden_layer[i] =
+                    relu(self.white_accumulated_layer[i] + self.hidden_layer_biases[i]);
             }
         } else {
             for i in 0..HIDDEN_LAYER_SIZE {
-                hidden_layer[i] = leaky_relu(
-                    self.black_accumulated_layer[i] as NetworkOutputValue
-                        * self.hidden_layer_scaling_factor
-                        + self.hidden_layer_biases[i],
-                );
+                hidden_layer[i] =
+                    relu(self.black_accumulated_layer[i] + self.hidden_layer_biases[i]);
             }
         }
 
         let mut output = self.output_layer_bias;
 
         for i in 0..HIDDEN_LAYER_SIZE {
-            output += hidden_layer[i] * self.hidden_layer_to_output_layer_weights[i];
+            output += (hidden_layer[i] * self.hidden_layer_to_output_layer_weights[i]) as NetworkOutputValue * self.common_scaling_factor;
         }
 
-        win_probability_to_centi_pawn_score(sigmoid(output))
+        win_probability_to_centi_pawn_score(sigmoid(output,
+        ))
     }
 
     fn load_un_flatten(
         &mut self,
         input_layer_to_hidden_layer_weights: Vec<NetworkInputValue>,
-        hidden_layer_biases: Vec<NetworkOutputValue>,
+        hidden_layer_biases: Vec<NetworkInputValue>,
         hidden_layer_to_output_layer_weights: Vec<NetworkInputValue>,
         output_bias: NetworkOutputValue,
-        hidden_layer_scaling_factor: NetworkOutputValue,
-        output_layer_scaling_factor: NetworkOutputValue,
+        common_scaling_factor: NetworkOutputValue,
     ) {
         let mut offset = 0;
 
@@ -175,13 +165,11 @@ impl Network {
         }
 
         for i in 0..HIDDEN_LAYER_SIZE {
-            self.hidden_layer_to_output_layer_weights[i] = hidden_layer_to_output_layer_weights[i]
-                as NetworkOutputValue
-                * output_layer_scaling_factor;
+            self.hidden_layer_to_output_layer_weights[i] = hidden_layer_to_output_layer_weights[i];
         }
 
         self.output_layer_bias = output_bias;
-        self.hidden_layer_scaling_factor = hidden_layer_scaling_factor;
+        self.common_scaling_factor = common_scaling_factor * common_scaling_factor;
     }
 }
 
@@ -198,7 +186,6 @@ fn load_default_weights_and_biases(network: &mut Network) {
         HIDDEN_LAYER_BIASES.to_vec(),
         HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS.to_vec(),
         OUTPUT_BIAS,
-        HIDDEN_LAYER_SCALING_FACTOR,
-        OUTPUT_LAYER_SCALING_FACTOR,
+        COMMON_SCALING_FACTOR,
     );
 }

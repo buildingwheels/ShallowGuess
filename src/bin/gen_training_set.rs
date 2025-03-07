@@ -6,13 +6,15 @@ use std::{env, io};
 
 use shallow_guess::chess_move_gen::{generate_captures_and_promotions, is_invalid_position};
 use shallow_guess::chess_position::ChessPosition;
-use shallow_guess::def::{A1, BLACK, H8, NO_PIECE, WHITE};
+use shallow_guess::def::{A1, BLACK, H8, NO_PIECE, PIECE_TYPE_COUNT, WHITE};
 use shallow_guess::network::{calculate_network_input_layer_index, Network};
 use shallow_guess::network_weights::INPUT_LAYER_SIZE;
 use shallow_guess::types::{ChessMoveCount, ChessPiece, ChessSquare, Score, SearchPly};
 use shallow_guess::util::{NetworkInputs, FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
 
 const MAX_PLY: SearchPly = 8;
+
+const MATERIAL_SCORES: [Score; PIECE_TYPE_COUNT] = [0, 1, 3, 3, 5, 10, 100, -1, -3, -3, -5, -10, -100];
 
 fn main() {
     let mut args = env::args().into_iter();
@@ -52,7 +54,7 @@ fn generate_training_set(raw_training_set_file: &str, output_file_path: &str, ba
             let mut chess_position = ChessPosition::new(Network::new());
             chess_position.set_from_fen(fen);
 
-            let static_score = chess_position.get_material_score();
+            let static_score = get_material_score(&chess_position);
             let q_score = exchange_search(&mut chess_position, static_score, static_score + 1, 0);
 
             if q_score != static_score {
@@ -145,7 +147,7 @@ fn exchange_search(
     beta: Score,
     ply: SearchPly,
 ) -> Score {
-    let static_eval = chess_position.get_material_score();
+    let static_eval = get_material_score(chess_position);
 
     if ply > MAX_PLY {
         return static_eval;
@@ -211,6 +213,20 @@ fn parse_network_inputs_from_fen(chess_position: &ChessPosition) -> NetworkInput
     }
 
     network_inputs
+}
+
+fn get_material_score(chess_position: &ChessPosition) -> Score {
+    let mut score = 0;
+
+    for chess_square in A1..=H8 {
+        score += MATERIAL_SCORES[chess_position.board[chess_square] as usize];
+    }
+
+    if chess_position.player == WHITE {
+        score
+    } else {
+        -score
+    }
 }
 
 fn update_training_network_inputs(

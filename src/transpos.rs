@@ -93,7 +93,7 @@ impl TranspositionTable {
             self.utilization_count += 1;
         }
 
-        if new_entry.depth + new_entry.hash_age >= entry.depth + entry.hash_age {
+        if new_entry.hash_age > entry.hash_age || new_entry.depth >= entry.depth {
             entry.clone_from(&new_entry);
         } else {
             let entry = &mut self.always_replacing_table[index];

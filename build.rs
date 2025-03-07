@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Write;
 
 fn main() {
-    load_weights(768, 256);
+    load_weights(768, 512);
 }
 
 fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
@@ -29,10 +29,8 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
     let output_bias =
         values[input_layer_to_hidden_layer_size + hidden_layer_size + hidden_layer_size];
 
-    let hidden_layer_scaling_factor =
+    let common_scaling_factor =
         values[input_layer_to_hidden_layer_size + hidden_layer_size + hidden_layer_size + 1];
-    let output_layer_scaling_factor =
-        values[input_layer_to_hidden_layer_size + hidden_layer_size + hidden_layer_size + 2];
 
     let mut code = String::new();
     code.push_str(&format!(
@@ -54,7 +52,7 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
     code.push_str("];\n\n");
 
     code.push_str(&format!(
-        "pub const HIDDEN_LAYER_BIASES: [f32; {}] = [\n",
+        "pub const HIDDEN_LAYER_BIASES: [i32; {}] = [\n",
         hidden_layer_size
     ));
     for &value in hidden_layer_biases {
@@ -73,12 +71,8 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
 
     code.push_str(&format!("pub const OUTPUT_BIAS: f32 = {};\n", output_bias));
     code.push_str(&format!(
-        "pub const HIDDEN_LAYER_SCALING_FACTOR: f32 = {};\n",
-        hidden_layer_scaling_factor
-    ));
-    code.push_str(&format!(
-        "pub const OUTPUT_LAYER_SCALING_FACTOR: f32 = {};\n",
-        output_layer_scaling_factor
+        "pub const COMMON_SCALING_FACTOR: f32 = {};\n",
+        common_scaling_factor
     ));
 
     let mut file = fs::File::create(out_file).expect("Failed to create weights source file");

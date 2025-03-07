@@ -8,7 +8,6 @@ import numpy as np
 
 from model import ShallowGuessNetwork
 
-
 hidden_layer_size = int(sys.argv[1])
 model_file = sys.argv[2]
 export_file = sys.argv[3]
@@ -31,28 +30,36 @@ for name, module in quantized_model.named_modules():
         scaling_factors.append(module.weight().q_scale())
         assert(module.weight().q_zero_point() == 0.)
 
+common_scaling_factor = min(scaling_factors)
+
+print(f"Common scaling factor selected: {common_scaling_factor}")
 
 with torch.no_grad():
     fc1_weight = quantized_model.fc1.weight()
-    fc1_weight_int = fc1_weight.int_repr()
     fc1_bias = quantized_model.fc1.bias()
 
+    fc1_weight_int = torch.round(fc1_weight.int_repr() * (fc1_weight.q_scale() / common_scaling_factor)).int()
+    fc1_bias_int = torch.round(fc1_bias / common_scaling_factor).int()
+
     fc2_weight = quantized_model.fc2.weight()
-    fc2_weight_int = fc2_weight.int_repr()
     fc2_bias = quantized_model.fc2.bias()
 
+    fc2_weight_int = torch.round(fc2_weight.int_repr() * (fc2_weight.q_scale() / common_scaling_factor)).int()
+
     fc1_weight_int = np.atleast_1d(fc1_weight_int.numpy().flatten())
-    fc1_bias = np.atleast_1d(fc1_bias.numpy().flatten())
+    fc1_bias_int = np.atleast_1d(fc1_bias_int.numpy().flatten())
     fc2_weight_int = np.atleast_1d(fc2_weight_int.numpy().flatten())
     fc2_bias = np.atleast_1d(fc2_bias.numpy().flatten())
-    scaling_factors = np.atleast_1d(np.array(scaling_factors).flatten())
+
+    print(f"Max weights {max(fc1_weight_int)} {max(fc2_weight_int)}, max biases {max(fc1_bias_int)}")
+    print(f"Min weights {min(fc1_weight_int)} {min(fc2_weight_int)}, min biases {min(fc1_bias_int)}")
 
     flattened_weights_biases = np.concatenate([
         fc1_weight_int,
-        fc1_bias,
+        fc1_bias_int,
         fc2_weight_int,
         fc2_bias,
-        scaling_factors,
+        np.array([common_scaling_factor]),
     ])
 
 

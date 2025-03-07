@@ -5,7 +5,6 @@ use crate::def::{
     CASTLING_FLAG_WHITE_KING_SIDE, CASTLING_FLAG_WHITE_QUEEN_SIDE, CHESS_FILE_COUNT, D1, D8, F1,
     F8, FILE_H, G1, G8, H1, H8, NO_PIECE, NO_SQUARE, WHITE, WK, WP, WR,
 };
-use crate::eval::MATERIAL_SCORE;
 use crate::fen::{
     fen_str_constants, get_chess_piece_from_char, get_chess_square_from_chars,
     CHESS_PIECE_TO_CHESS_PIECE_CHAR_MAP, CHESS_SQUARE_INDEX_TO_STR_MAP,
@@ -47,7 +46,6 @@ pub struct ChessPosition {
     pub full_move_count: ChessMoveCount,
     pub hash_key: HashKey,
 
-    material_score: Score,
     hash_key_history: Vec<HashKey>,
     chess_move_history: Vec<ChessMove>,
 }
@@ -68,7 +66,6 @@ impl ChessPosition {
             half_move_count: 0,
             full_move_count: 0,
             hash_key: 0,
-            material_score: 0,
 
             hash_key_history: Vec::new(),
             chess_move_history: Vec::new(),
@@ -79,8 +76,6 @@ impl ChessPosition {
         self.hash_key = 0;
         self.hash_key_history.clear();
         self.chess_move_history.clear();
-
-        self.material_score = 0;
 
         self.board = [NO_PIECE; CHESS_SQUARE_COUNT];
         self.bitboards = [EMPTY_MASK; PIECE_TYPE_COUNT];
@@ -161,7 +156,6 @@ impl ChessPosition {
             self.bitboards[piece as usize] |= SQUARE_MASKS[current_square];
             self.hash_key ^= PIECE_SQUARE_HASH[piece as usize][current_square];
             self.network.add(piece, current_square);
-            self.material_score += MATERIAL_SCORE[piece as usize];
 
             if piece < BP {
                 self.white_all_bitboard |= SQUARE_MASKS[current_square];
@@ -285,14 +279,6 @@ impl ChessPosition {
         self.chess_move_history.last().unwrap()
     }
 
-    pub fn get_material_score(&self) -> Score {
-        if self.player == WHITE {
-            self.material_score
-        } else {
-            -self.material_score
-        }
-    }
-
     pub fn get_static_score(&self) -> Score {
         return self.network.evaluate(self.player);
     }
@@ -390,7 +376,6 @@ impl ChessPosition {
                     self.half_move_count = 0;
                     self.bitboards[captured_piece as usize] ^= to_square_mask;
                     self.network.remove(captured_piece, to_square);
-                    self.material_score -= MATERIAL_SCORE[captured_piece as usize];
 
                     self.hash_key ^= PIECE_SQUARE_HASH[captured_piece as usize][to_square];
 
@@ -431,9 +416,6 @@ impl ChessPosition {
                 self.network.remove(moving_piece, from_square);
                 self.network.add(promotion_piece, to_square);
 
-                self.material_score -= MATERIAL_SCORE[moving_piece as usize];
-                self.material_score += MATERIAL_SCORE[promotion_piece as usize];
-
                 if moving_piece < BP {
                     self.white_all_bitboard ^= from_square_mask | to_square_mask;
                 } else {
@@ -446,7 +428,6 @@ impl ChessPosition {
                 if captured_piece != NO_PIECE {
                     self.network.remove(captured_piece, to_square);
                     self.hash_key ^= PIECE_SQUARE_HASH[captured_piece as usize][to_square];
-                    self.material_score -= MATERIAL_SCORE[captured_piece as usize];
 
                     if captured_piece < BP {
                         self.white_all_bitboard ^= to_square_mask;
@@ -557,7 +538,6 @@ impl ChessPosition {
                     self.black_all_bitboard ^= SQUARE_MASKS[captured_square];
                     self.network.remove(BP, captured_square);
                     self.hash_key ^= PIECE_SQUARE_HASH[BP as usize][captured_square];
-                    self.material_score -= MATERIAL_SCORE[BP as usize];
                 } else {
                     let captured_square = to_square + CHESS_FILE_COUNT;
                     self.board[captured_square] = NO_PIECE;
@@ -566,7 +546,6 @@ impl ChessPosition {
                     self.white_all_bitboard ^= SQUARE_MASKS[captured_square];
                     self.network.remove(WP, captured_square);
                     self.hash_key ^= PIECE_SQUARE_HASH[WP as usize][captured_square];
-                    self.material_score -= MATERIAL_SCORE[WP as usize];
                 }
             }
             ChessMoveType::CreateEnPassant => {
@@ -637,7 +616,6 @@ impl ChessPosition {
                 if captured_piece != NO_PIECE {
                     self.bitboards[captured_piece as usize] ^= to_square_mask;
                     self.network.add(captured_piece, to_square);
-                    self.material_score += MATERIAL_SCORE[captured_piece as usize];
                 }
 
                 if moved_piece == WK {
@@ -658,14 +636,10 @@ impl ChessPosition {
                 self.network.add(moved_piece, from_square);
                 self.network.remove(promotion_piece, to_square);
 
-                self.material_score += MATERIAL_SCORE[moved_piece as usize];
-                self.material_score -= MATERIAL_SCORE[promotion_piece as usize];
-
                 if captured_piece != NO_PIECE {
                     self.board[to_square] = captured_piece;
                     self.bitboards[captured_piece as usize] ^= to_square_mask;
                     self.network.add(captured_piece, to_square);
-                    self.material_score += MATERIAL_SCORE[captured_piece as usize];
                 }
             }
             ChessMoveType::Castle => {
@@ -725,13 +699,11 @@ impl ChessPosition {
                     self.board[captured_square] = BP;
                     self.bitboards[BP as usize] ^= SQUARE_MASKS[captured_square];
                     self.network.add(BP, captured_square);
-                    self.material_score += MATERIAL_SCORE[BP as usize];
                 } else {
                     let captured_square = to_square + CHESS_FILE_COUNT;
                     self.board[captured_square] = WP;
                     self.bitboards[WP as usize] ^= SQUARE_MASKS[captured_square];
                     self.network.add(WP, captured_square);
-                    self.material_score += MATERIAL_SCORE[WP as usize];
                 }
             }
             ChessMoveType::CreateEnPassant => {

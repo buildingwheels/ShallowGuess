@@ -35,12 +35,6 @@ const KILLER_COUNT: usize = 2;
 const KILLER_INDEX_CUTOFF: usize = 0;
 const KILLER_INDEX_RAISE: usize = 1;
 
-const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 5;
-const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
-
-const FUTILITY_PRUNING_MAX_DEPTH: SearchDepth = 7;
-const FUTILITY_PRUNING_MARGINS: [Score; 7] = [0, 200, 400, 600, 800, 1000, 1200];
-
 const IID_MIN_DEPTH: SearchDepth = 7;
 const IID_SEARCH_DEPTH: SearchDepth = 2;
 
@@ -205,6 +199,7 @@ impl SearchEngine {
         let hash_age = chess_position.full_move_count;
 
         let mut best_move = EMPTY_CHESS_MOVE;
+
         let mut valid_move_count = 0;
         let mut alpha_raised = false;
 
@@ -216,7 +211,11 @@ impl SearchEngine {
             hash_entry = self.lookup_hash(chess_position.hash_key, safety_check);
         }
 
+        let hash_move;
+
         if let Some(entry) = hash_entry {
+            hash_move = entry.chess_move;
+
             if entry.depth >= depth && entry.score != 0 {
                 match entry.flag {
                     HashFlag::LowBound => {
@@ -238,34 +237,16 @@ impl SearchEngine {
                 }
             }
 
-            if entry.depth > 0 && !entry.chess_move.is_empty() {
-                best_move = entry.chess_move;
+            if !hash_move.is_empty() {
+                best_move = hash_move;
                 valid_move_count += 1;
             }
+        } else {
+            hash_move = EMPTY_CHESS_MOVE;
         }
 
         if depth == 0 {
             return self.q_search(chess_position, alpha, beta, ply);
-        }
-
-        if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
-            let static_eval = chess_position.get_static_score();
-
-            if depth < FUTILITY_PRUNING_MAX_DEPTH && static_eval - FUTILITY_PRUNING_MARGINS[depth as usize] > beta {
-                return beta;
-            }
-
-            if depth >= NULL_MOVE_PRUNING_MIN_DEPTH && static_eval >= beta {
-                let saved_enpassant_square = chess_position.make_null_move();
-
-                let scout_score = -self.ab_search(chess_position, -beta, 1-beta, false, depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION - 1, ply + 1);
-
-                chess_position.unmake_null_move(saved_enpassant_square);
-
-                if scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
-                    return beta;
-                }
-            }
         }
 
         if !best_move.is_empty() {
@@ -332,7 +313,7 @@ impl SearchEngine {
         while let Some(sortable_chess_move) = captures_and_promotions.pop() {
             let chess_move = sortable_chess_move.chess_move;
 
-            if chess_move == best_move {
+            if chess_move == hash_move {
                 continue;
             }
 
@@ -431,7 +412,7 @@ impl SearchEngine {
         while let Some(sortable_chess_move) = quiet_chess_moves.pop() {
             let chess_move = sortable_chess_move.chess_move;
 
-            if chess_move == best_move {
+            if chess_move == hash_move {
                 continue;
             }
 

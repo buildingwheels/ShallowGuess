@@ -26,8 +26,6 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Counter Move Heuristics
 - History Heuristics
 - Killer Heuristics
-- Null Move Pruning
-- Futility Pruning
 - Check Extensions
 
 ## Hashing & Transposition
@@ -39,15 +37,21 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Partially quantized (only for the 1st fully connected layer which is used for incremental updates)
 
 ## How to Use
-There are 3 trained models under the `resources/models/` folder:
+There are several trained models under the `resources/models/` folder:
+
+These ones were trained with Leaky ReLU and you need to modify `src/network.rs` to use them:
 - `1L-32.pth`
 - `1L-128.pth`
-- `1L-256.pth` (default)
+- `1L-256.pth`
+
+This is currently the default model:
+- `1L-512.pth`
 
 The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`:
 - `1L-32.weights`
 - `1L-128.weights`
-- `1L-256.weights` (default)
+- `1L-256.weights`
+- `1L-512.weights` (default)
 
 You can modify `build.rs` to load one of the three trained models:
 ```rust
@@ -55,7 +59,7 @@ fn main() {
     load_weights(768, <hidden_layer_size>);
 }
 ```
-You may change the value of <hidden_layer_size> to `32`, `128`, `256`, or other values if you have trained your own model with different sizes.
+You may change the value of <hidden_layer_size> to `32`, `128`, `256`, `512`, or other values if you have trained your own model with different sizes.
 
 Then run:
 ```bash
@@ -82,7 +86,7 @@ cargo run --bin gen_training_set --release raw-fen.txt pre-process-fen.txt resul
 Use scripts provided in the `scripts` folder:
 1. Run the following command to start training:
 ```bash
-python scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <(optional) existing-model-file>
+python scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> <(optional) existing-model-file>
 ```
 
 2. After training is completed, run the following command to export weights:

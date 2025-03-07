@@ -9,7 +9,7 @@ class ShallowGuessNetwork(nn.Module):
         self.hidden_layer_size = hidden_layer_size
         self.fc1 = nn.Linear(768, hidden_layer_size)
         self.fc2 = nn.Linear(hidden_layer_size, 1)
-        self.relu = nn.LeakyReLU()
+        self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
         self.dequant = quantization.DeQuantStub()
 
@@ -22,7 +22,7 @@ class ShallowGuessNetwork(nn.Module):
         return x
 
     def pub_name(self):
-        return f"1L-{self.hidden_layer_size}-RELU"
+        return f"1L-{self.hidden_layer_size}"
 
 
 def load_model(model_path):
