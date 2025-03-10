@@ -1,8 +1,29 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 
 fn main() {
-    load_weights(768, 512);
+    let config_content =
+        fs::read_to_string("config/network.cfg").expect("Failed to read config file");
+
+    let config: HashMap<String, usize> = config_content
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('=');
+            let key = parts.next()?.trim().to_string();
+            let value = parts.next()?.trim().parse().ok()?;
+            Some((key, value))
+        })
+        .collect();
+
+    let input_layer_size = config
+        .get("input_layer_size")
+        .expect("input_layer_size not found in config");
+    let hidden_layer_size = config
+        .get("hidden_layer_size")
+        .expect("hidden_layer_size not found in config");
+
+    load_weights(*input_layer_size, *hidden_layer_size);
 }
 
 fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
@@ -29,7 +50,7 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
     let output_bias =
         values[input_layer_to_hidden_layer_size + hidden_layer_size + hidden_layer_size];
 
-    let common_scaling_factor =
+    let scaling_factor =
         values[input_layer_to_hidden_layer_size + hidden_layer_size + hidden_layer_size + 1];
 
     let mut code = String::new();
@@ -52,7 +73,7 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
     code.push_str("];\n\n");
 
     code.push_str(&format!(
-        "pub const HIDDEN_LAYER_BIASES: [i32; {}] = [\n",
+        "pub const HIDDEN_LAYER_BIASES: [f32; {}] = [\n",
         hidden_layer_size
     ));
     for &value in hidden_layer_biases {
@@ -61,18 +82,22 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
     code.push_str("];\n\n");
 
     code.push_str(&format!(
-        "pub const HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS: [i32; {}] = [\n",
+        "pub const HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS: [f32; {}] = [\n",
         hidden_layer_size
     ));
     for &value in hidden_layer_to_output_layer_weights {
-        code.push_str(&format!("{}, ", value as i32));
+        if value == 0. {
+            code.push_str(&format!("{:.1}, ", value));
+        } else {
+            code.push_str(&format!("{}, ", value));
+        }
     }
     code.push_str("];\n\n");
 
     code.push_str(&format!("pub const OUTPUT_BIAS: f32 = {};\n", output_bias));
     code.push_str(&format!(
-        "pub const COMMON_SCALING_FACTOR: f32 = {};\n",
-        common_scaling_factor
+        "pub const SCALING_FACTOR: f32 = {};\n",
+        scaling_factor
     ));
 
     let mut file = fs::File::create(out_file).expect("Failed to create weights source file");

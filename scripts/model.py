@@ -3,22 +3,33 @@ import torch.nn as nn
 import torch.ao.quantization as quantization
 
 
+class ClippedReLU(nn.Module):
+    def __init__(self, clip_max=1.0):
+        super(ClippedReLU, self).__init__()
+        self.clip_max = clip_max
+
+    def forward(self, x):
+        x = torch.relu(x)
+        x = torch.clamp(x, max=self.clip_max)
+        return x
+
+
 class ShallowGuessNetwork(nn.Module):
     def __init__(self, hidden_layer_size):
         super(ShallowGuessNetwork, self).__init__()
         self.hidden_layer_size = hidden_layer_size
         self.fc1 = nn.Linear(768, hidden_layer_size)
         self.fc2 = nn.Linear(hidden_layer_size, 1)
-        self.relu = nn.ReLU()
+        self.relu = ClippedReLU()
         self.sigmoid = nn.Sigmoid()
         self.dequant = quantization.DeQuantStub()
 
     def forward(self, x):
         x = self.fc1(x)
+        x = self.dequant(x)
         x = self.relu(x)
         x = self.fc2(x)
         x = self.sigmoid(x)
-        x = self.dequant(x)
         return x
 
     def pub_name(self):

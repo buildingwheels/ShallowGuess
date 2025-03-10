@@ -60,11 +60,21 @@ model.train()
 
 start_time = datetime.now()
 
+trained_files_count = {}
+
+for i in range(len(file_list)):
+        trained_files_count[file_list[i]] = 0
+
 for epoch in range(max_epochs):
     print(f"Training epoch: {epoch}")
 
     selected_files = random.sample(file_list, sample_size)
     num_selected_files = len(selected_files)
+
+    for i in range(num_selected_files):
+        file_name = selected_files[i]
+        trained_files_count[file_name] += 1
+        print(f"{trained_files_count[file_name]} times training on {file_name}")
 
     epoch_loss = 0.0
     epoch_samples_trained = 0

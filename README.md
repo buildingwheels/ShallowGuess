@@ -21,45 +21,29 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Internal Iterative Deepening
 - Aspiration Window
 - Quiescence Search
-- Static Exchange Evaluation (SEE)
+- MVV-LVA Sorting
 - Late Move Reduction
 - Counter Move Heuristics
 - History Heuristics
 - Killer Heuristics
 - Check Extensions
 - Null Move Pruning
+- Delta Pruning
 
 ## Hashing & Transposition
 - Zobrist Hashing
-- Depth-preferred Transposition Table + Always-replacing Transposition Table
+- Depth-preferred Transposition Table
+- Always-replacing Transposition Table
 
 ## Evaluation
-- Neural network with single hidden layer
-- Partially quantized (only for the 1st fully connected layer which is used for incremental updates)
+- Neural network with one hidden layer
+- Partially quantized (only the 1st fully-connected layer which is used for incremental updates)
 
 ## How to Use
-There are several trained models under the `resources/models/` folder:
+There trained models are under the `resources/models/` folder.
+The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`.
 
-These ones were trained with Leaky ReLU and you need to modify `src/network.rs` to use them (check git history for leaky relu implementation):
-- `1L-32.pth`
-- `1L-128.pth`
-- `1L-256.pth`
-
-This is currently the default model training with ReLU:
-- `1L-512.pth`
-
-The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`:
-- `1L-32.weights`
-- `1L-128.weights`
-- `1L-256.weights` (strongest)
-- `1L-512.weights` (current)
-
-You can modify `build.rs` to load one of the three trained models:
-```rust
-fn main() {
-    load_weights(768, <hidden_layer_size>);
-}
-```
+You can modify `config/network.cfg` to load one of the three trained models.
 You may change the value of <hidden_layer_size> to `32`, `128`, `256`, `512`, or other values if you have trained your own model with different sizes.
 
 Then run:
@@ -78,7 +62,7 @@ pgn-extract -Wfen <your-pgn-file> > raw-fen.txt
 
 2. Run the following command to generate training data:
 ```bash
-cargo run --bin gen_training_set --release raw-fen.txt pre-process-fen.txt result.txt <skip-count> <batch-size>
+cargo run --bin gen_training_set --release raw-fen.txt pre-process-fen.txt result.txt <skip-position-count> <max-number-of-positions-per-game> <batch-size>
 ```
 
 ### Training
@@ -87,7 +71,7 @@ cargo run --bin gen_training_set --release raw-fen.txt pre-process-fen.txt resul
 Use scripts provided in the `scripts` folder:
 1. Run the following command to start training:
 ```bash
-python scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> <(optional) existing-model-file>
+python scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> <existing-model-file (optional)>
 ```
 
 2. After training is completed, run the following command to export weights:

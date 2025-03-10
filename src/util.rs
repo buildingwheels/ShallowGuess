@@ -4,10 +4,10 @@ use crate::def::{
     E6, E7, E8, F1, F2, F3, F4, F5, F6, F7, F8, FILE_A, FILE_H, G1, G2, G3, G4, G5, G6, G7, G8, H1,
     H2, H3, H4, H5, H6, H7, H8, NO_PIECE, PIECE_TYPE_COUNT, WB, WK, WN, WP, WQ, WR,
 };
-use crate::network::NetworkInputValue;
+use crate::network::NetworkIntValue;
 use crate::types::{BitBoard, ChessFile, ChessPiece, ChessRank, ChessSquare};
 
-pub type NetworkInputs = Vec<NetworkInputValue>;
+pub type NetworkInputs = Vec<NetworkIntValue>;
 
 #[inline(always)]
 pub const fn get_file(chess_square: ChessSquare) -> ChessFile {

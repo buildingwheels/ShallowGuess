@@ -1,6 +1,5 @@
 use crate::chess_move_gen::{
-    generate_captures_and_promotions, generate_quiet_moves,
-    get_least_valued_attackers_to_chess_square, is_in_check, is_invalid_position,
+    generate_captures_and_promotions, generate_quiet_moves, is_in_check, is_invalid_position,
 };
 use crate::chess_position::ChessPosition;
 use crate::def::{
@@ -35,15 +34,18 @@ const KILLER_COUNT: usize = 2;
 const KILLER_INDEX_CUTOFF: usize = 0;
 const KILLER_INDEX_RAISE: usize = 1;
 
-const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 5;
-const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
+const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 7;
+const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 3;
 
 const IID_MIN_DEPTH: SearchDepth = 7;
-const IID_SEARCH_DEPTH: SearchDepth = 2;
+const IID_SEARCH_DEPTH_REDUCTION: SearchDepth = 2;
 
 const MAX_PV_LENGTH: usize = 128;
 
-const SORTING_PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [0, 1, 3, 3, 5, 10, 100, 1, 3, 3, 5, 10, 100];
+const SORTING_PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
+    0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
+];
+const DELTA_MARGIN: Score = 200;
 
 pub struct SearchInfo {
     pub score: Score,
@@ -209,7 +211,14 @@ impl SearchEngine {
         let mut hash_entry = self.lookup_hash(chess_position.hash_key, safety_check);
 
         if hash_entry.is_none() && depth > IID_MIN_DEPTH && beta - alpha > 1 {
-            self.ab_search(chess_position, alpha, beta, in_check, IID_SEARCH_DEPTH, ply);
+            self.ab_search(
+                chess_position,
+                alpha,
+                beta,
+                in_check,
+                depth - IID_SEARCH_DEPTH_REDUCTION,
+                ply,
+            );
 
             hash_entry = self.lookup_hash(chess_position.hash_key, safety_check);
         }
@@ -255,10 +264,17 @@ impl SearchEngine {
         if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
             let static_eval = chess_position.get_static_score();
 
-            if depth >= NULL_MOVE_PRUNING_MIN_DEPTH && static_eval >= beta {
+            if depth > NULL_MOVE_PRUNING_MIN_DEPTH && static_eval >= beta {
                 let saved_enpassant_square = chess_position.make_null_move();
 
-                let scout_score = -self.ab_search(chess_position, -beta, 1-beta, false, depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION - 1, ply + 1);
+                let scout_score = -self.ab_search(
+                    chess_position,
+                    -beta,
+                    1 - beta,
+                    false,
+                    depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION - 1,
+                    ply + 1,
+                );
 
                 chess_position.unmake_null_move(saved_enpassant_square);
 
@@ -452,11 +468,12 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
-                let depth_reduction = if !gives_check && depth > 1 && sortable_chess_move.reducable {
-                    u16_sqrt(depth).min(depth - 1)
-                } else {
-                    0
-                };
+                let depth_reduction =
+                    if !in_check && !gives_check && depth > 1 && sortable_chess_move.reducable {
+                        u16_sqrt(depth).min(depth - 1)
+                    } else {
+                        0
+                    };
 
                 score = -self.ab_search(
                     chess_position,
@@ -609,6 +626,14 @@ impl SearchEngine {
         while let Some(sortable_chess_move) = captures_and_promotions.pop() {
             let chess_move = sortable_chess_move.chess_move;
 
+            let captured_value = SORTING_PIECE_VALS
+                [chess_position.board[chess_move.to_square] as usize]
+                + SORTING_PIECE_VALS[chess_move.promotion_piece as usize];
+
+            if static_eval + captured_value + DELTA_MARGIN < alpha {
+                continue;
+            }
+
             let saved_state = chess_position.make_move(&chess_move);
 
             if is_invalid_position(chess_position) {
@@ -660,14 +685,10 @@ impl SearchEngine {
                 continue;
             }
 
-            let mut sort_score = SORTING_PIECE_VALS
+            let sort_score = SORTING_PIECE_VALS
                 [chess_position.board[chess_move.to_square] as usize]
                 - SORTING_PIECE_VALS[chess_position.board[chess_move.from_square] as usize]
                 + SORTING_PIECE_VALS[chess_move.promotion_piece as usize];
-
-            if sort_score <= 0 {
-                sort_score = static_exchange_evaluate(chess_position, &chess_move, 0);
-            }
 
             if sort_score > max_exchange_score {
                 max_exchange_score = sort_score;
@@ -676,7 +697,7 @@ impl SearchEngine {
             sorted_moves.push(SortableChessMove {
                 chess_move,
                 sort_score,
-                reducable: sort_score < 0,
+                reducable: false,
             });
         }
 
@@ -957,42 +978,6 @@ impl SearchEngine {
             },
             principal_variation,
         );
-    }
-}
-
-fn static_exchange_evaluate(
-    chess_position: &mut ChessPosition,
-    chess_move: &ChessMove,
-    ply: SearchDepth,
-) -> Score {
-    let attack_square = chess_move.to_square;
-    let initial_gain = SORTING_PIECE_VALS[chess_position.board[attack_square] as usize]
-        + SORTING_PIECE_VALS[chess_move.promotion_piece as usize];
-
-    let saved_state = chess_position.make_move(chess_move);
-    let attackers = get_least_valued_attackers_to_chess_square(chess_position, attack_square);
-
-    if attackers.is_empty() {
-        chess_position.unmake_move(chess_move, saved_state);
-        return initial_gain;
-    }
-
-    let mut max_opponent_gain = 0;
-
-    for attacker in attackers {
-        let opponent_gain = static_exchange_evaluate(chess_position, &attacker, ply + 1);
-
-        if opponent_gain > max_opponent_gain {
-            max_opponent_gain = opponent_gain;
-        }
-    }
-
-    chess_position.unmake_move(chess_move, saved_state);
-
-    if ply == 0 {
-        initial_gain - max_opponent_gain
-    } else {
-        0.max(initial_gain - max_opponent_gain)
     }
 }
 

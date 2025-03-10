@@ -91,10 +91,12 @@ pub fn print_info(search_info: SearchInfo, principal_variation: &[ChessMove]) {
     let score = search_info.score;
     let abs_score = score.abs();
     let display_score = if abs_score > TERMINATE_SCORE {
+        let mate_distance = (MATE_SCORE - abs_score + 1) / 2;
+
         if score > 0 {
-            format!("mate {}", MATE_SCORE - abs_score)
+            format!("mate {}", mate_distance)
         } else {
-            format!("mate -{}", MATE_SCORE - abs_score)
+            format!("mate -{}", -mate_distance)
         }
     } else {
         format!("cp {}", score)

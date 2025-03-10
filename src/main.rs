@@ -14,15 +14,15 @@ fn main() {
     thread::Builder::new()
         .stack_size(STACK_SIZE_BYTES)
         .spawn(|| {
-            run_uci_game(Network::new());
+            run_uci_game();
         })
         .unwrap()
         .join()
         .unwrap();
 }
 
-fn run_uci_game(network: Network) {
-    let chess_position = ChessPosition::new(network);
+fn run_uci_game() {
+    let chess_position = ChessPosition::new(Network::new());
     let transposition_table = TranspositionTable::new(DEFAULT_HASH_SIZE_MB);
     let search_engine = SearchEngine::new(transposition_table);
     let chess_game = Arc::new(Mutex::new(ChessGame::new(chess_position, search_engine)));
