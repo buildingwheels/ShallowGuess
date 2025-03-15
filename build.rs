@@ -64,11 +64,11 @@ fn load_weights(input_layer_size: usize, hidden_layer_size: usize) {
     ));
 
     code.push_str(&format!(
-        "pub const INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS: [i32; {}] = [\n",
+        "pub const INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS: [i16; {}] = [\n",
         input_layer_to_hidden_layer_size
     ));
     for &value in input_layer_to_hidden_layer_weights {
-        code.push_str(&format!("{}, ", value as i32));
+        code.push_str(&format!("{}, ", value as i16));
     }
     code.push_str("];\n\n");
 

@@ -1,4 +1,6 @@
-use crate::types::{BitBoard, ChessMove, ChessMoveCount, HashKey, MegaBytes, Score, SearchDepth, EMPTY_CHESS_MOVE};
+use crate::types::{
+    BitBoard, ChessMove, ChessMoveCount, HashKey, MegaBytes, Score, SearchDepth, EMPTY_CHESS_MOVE,
+};
 
 pub const DEFAULT_HASH_SIZE_MB: MegaBytes = 1024;
 pub const MIN_HASH_SIZE_MB: MegaBytes = 2;
@@ -7,7 +9,7 @@ pub const HASH_ENTRY_PER_MB: usize = 8192;
 
 const HASH_UTILIZATION_RATIO: usize = 1000;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum HashFlag {
     LowBound,
     HighBound,

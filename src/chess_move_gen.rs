@@ -6,8 +6,8 @@ use crate::chess_position::ChessPosition;
 use crate::def::{
     B1, B8, BB, BK, BLACK, BN, BP, BQ, BR, C1, C8, CASTLING_FLAG_BLACK_KING_SIDE,
     CASTLING_FLAG_BLACK_QUEEN_SIDE, CASTLING_FLAG_WHITE_KING_SIDE, CASTLING_FLAG_WHITE_QUEEN_SIDE,
-    D1, D8, E1, E8, F1, F8, G1, G8, NO_PIECE, NO_SQUARE, RANK_2, RANK_7, UP_DELTA,
-    WB, WHITE, WK, WN, WP, WQ, WR,
+    D1, D8, E1, E8, F1, F8, G1, G8, NO_PIECE, NO_SQUARE, RANK_2, RANK_7, UP_DELTA, WB, WHITE, WK,
+    WN, WP, WQ, WR,
 };
 use crate::process_occupied_indices;
 use crate::types::ChessMoveType::{Castle, CreateEnPassant, EnPassant, Promotion, Regular};

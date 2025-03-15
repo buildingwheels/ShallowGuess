@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torch.ao.quantization as quantization
 
-torch.backends.cudnn.enabled = False
+torch.set_default_device('cpu')
 
 from model import ShallowGuessNetwork
 
@@ -26,8 +26,17 @@ class FileDataset(Dataset):
     def __getitem__(self, idx):
         line = self.lines[idx].strip()
         values = line.split(",")
-        features = torch.tensor([float(x) for x in values[:-1]], dtype=torch.float32)
+
+        decompressed_features = []
+        for value in values[:-1]:
+            if value.isdigit():
+                decompressed_features.extend([0.] * int(value))
+            else:
+                decompressed_features.append(1.)
+
+        features = torch.tensor(decompressed_features, dtype=torch.float32)
         result = torch.tensor([float(values[-1])], dtype=torch.float32)
+
         return features, result
 
 
@@ -46,7 +55,7 @@ quantization.prepare_qat(model, inplace=True)
 
 if len(sys.argv) > 6:
     existing_pth_file = sys.argv[6]
-    model.load_state_dict(torch.load(existing_pth_file, weights_only=True))
+    model.load_state_dict(torch.load(existing_pth_file, weights_only=True), strict=False)
     print(f"Loaded existing model {existing_pth_file}")
 
 criterion = nn.MSELoss()
@@ -61,6 +70,7 @@ model.train()
 start_time = datetime.now()
 
 trained_files_count = {}
+total_samples_trained = 0
 
 for i in range(len(file_list)):
         trained_files_count[file_list[i]] = 0
@@ -83,7 +93,7 @@ for epoch in range(max_epochs):
     for file_idx, file_path in enumerate(selected_files):
         print(f"Processing file: {file_idx + 1}/{num_selected_files}: {file_path}")
         dataset = FileDataset(file_path)
-        dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+        dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
 
         for batch_idx, (batch_features, batch_results) in enumerate(dataloader):
             optimizer.zero_grad()
@@ -95,13 +105,16 @@ for epoch in range(max_epochs):
             batch_loss = loss.item()
             epoch_loss += batch_loss
 
-            epoch_samples_trained += len(batch_features)
+            samples_count = len(batch_features)
+            epoch_samples_trained += samples_count
+            total_samples_trained += samples_count
+
             progress = epoch_samples_trained / (len(dataset) * num_selected_files) * 100.
             batch_count += 1
 
             if batch_idx % 100 == 0:
                 print(
-                    f"Trained [{epoch_samples_trained}], "
+                    f"Trained [{(total_samples_trained / 1000000.):.2f}M Positions], "
                     f"Epoch [{epoch}/{max_epochs}], "
                     f"File [{file_idx + 1}/{num_selected_files}], "
                     f"Batch [{batch_idx + 1}/{len(dataloader)}], "
@@ -111,10 +124,11 @@ for epoch in range(max_epochs):
                     f"Training time: {datetime.now() - start_time}"
                 )
 
-        model.eval()
-        torch.save(model.state_dict(), f"{model_export_path}/{model.pub_name()}.pth")
-        model.train()
-        print(f"Saved model")
+            if batch_idx % 10000 == 0:
+                model.eval()
+                torch.save(model.state_dict(), f"{model_export_path}/{model.pub_name()}.pth")
+                model.train()
+                print(f"Saved model")
 
     avg_epoch_loss = epoch_loss / batch_count
 

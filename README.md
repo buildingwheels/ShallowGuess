@@ -1,9 +1,6 @@
-
-![logo](https://github.com/user-attachments/assets/ac8030d7-21a3-47c5-afa8-9ecc00883eb2)
-
 # Shallow Guess
 
-A chess engine powered by neural networks. Still in early preview, work in progress.
+A strong UCI-compatible chess engine powered by neural networks.
 
 ## Board Representation
 
@@ -22,13 +19,14 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Aspiration Window
 - Quiescence Search
 - MVV-LVA Sorting
-- Late Move Reduction
+- Late Move Reductions
 - Counter Move Heuristics
 - History Heuristics
 - Killer Heuristics
-- Check Extensions
 - Null Move Pruning
 - Delta Pruning
+- Singular Move Extensions
+- Mate Threat Extensions
 
 ## Hashing & Transposition
 - Zobrist Hashing
@@ -40,20 +38,27 @@ A chess engine powered by neural networks. Still in early preview, work in progr
 - Partially quantized (only the 1st fully-connected layer which is used for incremental updates)
 
 ## How to Use
-There trained models are under the `resources/models/` folder.
-The associated weights have been exported into the `resources/weights/` folder with `scripts/export.py`.
+### Use Pre-compiled Binaries
+The following binaries are pre-compiled and attached in each release:
+- Linux x86-64 SSE
+- Linux x86-64 AVX2
+- Windows x86-64 SSE
+- Windows x86-64 AVX2
 
-You can modify `config/network.cfg` to load one of the three trained models.
-You may change the value of <hidden_layer_size> to `32`, `128`, `256`, `512`, or other values if you have trained your own model with different sizes.
+### Compile Natively
+There trained models are under the `resources/models/` folder.
+The associated weights have been exported into the `resources/weights/` folder with `training_scripts/export.py`.
+
+You can modify `config/network.cfg` to load one of the trained models.
 
 Then run:
 ```bash
 cargo build --release
 ```
 
-You can load the built binary `target/release/shallow_guess` in any UCI-compatible GUI.
+The built binary can be found at `target/release/shallow_guess`.
 
-## How to Train Your Own Model
+## Train Your Own Model
 ### Data Preparation
 1. Create a FEN file from PGN file with [pgn-extract](https://www.cs.kent.ac.uk/people/staff/djb/pgn-extract/):
 ```bash
@@ -68,29 +73,28 @@ cargo run --bin gen_training_set --release raw-fen.txt pre-process-fen.txt resul
 ### Training
 **Note**: you need to install `pytorch`.
 
-Use scripts provided in the `scripts` folder:
+Use scripts provided in the `training_scripts` folder:
 1. Run the following command to start training:
 ```bash
-python scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> <existing-model-file (optional)>
+python training_scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> <existing-model-file (optional)>
 ```
 
 2. After training is completed, run the following command to export weights:
 ```bash
-python scripts/export.py <hidden-layer-size> <model-file> <output-weight-file>
+python training_scripts/export.py <hidden-layer-size> <model-file> <output-weight-file>
 ```
-
 
 ## Credits
 ### PGN Extract
 [pgn-extract](https://www.cs.kent.ac.uk/people/staff/djb/pgn-extract/) was used for extracting training positions from PGN files.
 
 ### CCRL (Computer Chess Rating Lists)
-Big part of the training data were generated based on history games found on CCRL website.
+50% of the training data were generated based on history games found on CCRL website.
 
 ### Lichess Open Database & Lichess Elite Database
-Part of the training data were generated from games randomly selected from these websites:
+50% of the training data were generated from games randomly selected from these websites:
 - [Lichess Open Database](https://database.lichess.org/)
 - [Lichess Elite Database](https://database.nikonoel.fr/)
 
 ### TCEC (Top Chess Engine Championship)
-Part of the training data were generated from history [TCEC](https://tcec-chess.com/) tournament games.
+The training data for the intitial experimental versions were generated from [TCEC](https://tcec-chess.com/) history tournament games.

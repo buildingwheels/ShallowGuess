@@ -1,3 +1,5 @@
 /target
 /.idea
-/scripts/__pycache__/
+/training_scripts/__pycache__/
+/binaries
+

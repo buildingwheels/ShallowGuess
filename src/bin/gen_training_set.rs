@@ -4,7 +4,9 @@ use std::path::Path;
 use std::time::Instant;
 use std::{env, io};
 
-use shallow_guess::chess_move_gen::{generate_captures_and_promotions, is_in_check, is_invalid_position};
+use shallow_guess::chess_move_gen::{
+    generate_captures_and_promotions, is_in_check, is_invalid_position,
+};
 use shallow_guess::chess_position::ChessPosition;
 use shallow_guess::def::{A1, BLACK, H8, NO_PIECE, PIECE_TYPE_COUNT, WHITE};
 use shallow_guess::network::{calculate_network_input_layer_index, Network};
@@ -12,9 +14,12 @@ use shallow_guess::network_weights::INPUT_LAYER_SIZE;
 use shallow_guess::types::{ChessPiece, ChessSquare, Score, SearchPly};
 use shallow_guess::util::{NetworkInputs, FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
 
+const ONE_SYMBOL: &str = "X,";
+
 const MAX_PLY: SearchPly = 8;
 
-const MATERIAL_SCORES: [Score; PIECE_TYPE_COUNT] = [0, 1, 3, 3, 5, 10, 100, -1, -3, -3, -5, -10, -100];
+const MATERIAL_SCORES: [Score; PIECE_TYPE_COUNT] =
+    [0, 1, 3, 3, 5, 10, 100, -1, -3, -3, -5, -10, -100];
 
 fn main() {
     let mut args = env::args().into_iter();
@@ -27,7 +32,12 @@ fn main() {
     let max_count = args.next().unwrap().parse::<usize>().unwrap();
     let batch_size = args.next().unwrap().parse::<usize>().unwrap();
 
-    generate_raw_training_set(&original_fen_file, &processed_fen_file, skip_count, max_count);
+    generate_raw_training_set(
+        &original_fen_file,
+        &processed_fen_file,
+        skip_count,
+        max_count,
+    );
     generate_training_set(&processed_fen_file, &output_file, batch_size);
 }
 
@@ -73,8 +83,23 @@ fn generate_training_set(raw_training_set_file: &str, output_file_path: &str, ba
                 result = 1. - result;
             }
 
+            let mut zero_count = 0;
+
             for x in network_inputs {
-                output_batch_buffer.push_str(&format!("{},", x));
+                if x == 0 {
+                    zero_count += 1;
+                } else {
+                    if zero_count > 0 {
+                        output_batch_buffer.push_str(&format!("{},", zero_count));
+                        zero_count = 0;
+                    }
+
+                    output_batch_buffer.push_str(ONE_SYMBOL);
+                }
+            }
+
+            if zero_count > 0 {
+                output_batch_buffer.push_str(&format!("{},", zero_count));
             }
 
             output_batch_buffer.push_str(&format!("{}\n", result));
@@ -132,7 +157,9 @@ fn generate_raw_training_set(
             } else if !line.contains("[") {
                 position_count += 1;
 
-                if position_count > skip_opening_positions && position_count < max_positions_per_game {
+                if position_count > skip_opening_positions
+                    && position_count < max_positions_per_game
+                {
                     file_writer
                         .write(format!("{},{}\n", line.trim(), current_game_result).as_bytes())
                         .unwrap();

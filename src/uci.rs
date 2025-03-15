@@ -1,7 +1,8 @@
 use crate::chess_game::ChessGame;
 use crate::chess_position::ChessPosition;
 use crate::def::{
-    BK, BP, C1, C8, CREATE_ENPASSANT_DELTA, E1, E8, G1, G8, MATE_SCORE, NO_PIECE, TERMINATE_SCORE, WHITE, WK, WP
+    BK, BP, C1, C8, CREATE_ENPASSANT_DELTA, E1, E8, G1, G8, MATE_SCORE, NO_PIECE, TERMINATE_SCORE,
+    WHITE, WK, WP,
 };
 use crate::engine_info::{AUTHOR, ENGINE_NAME, ENGINE_VERSION};
 use crate::fen::fen_str_constants::{SPLITTER, START_POS};
@@ -70,7 +71,10 @@ pub fn process_command(
 }
 
 fn print_engine_info() {
-    println!("id name {} {}_{}", ENGINE_NAME, ENGINE_VERSION, HIDDEN_LAYER_SIZE);
+    println!(
+        "id name {} {}_{}",
+        ENGINE_NAME, ENGINE_VERSION, HIDDEN_LAYER_SIZE
+    );
     println!("id author {}", AUTHOR);
     println!(
         "option name Hash type spin default {} min {} max {}",
@@ -263,10 +267,12 @@ fn process_go_command(
     thread::spawn(move || {
         let mut chess_game = chess_game.lock().unwrap();
 
+        let is_first_move = chess_game.get_search_count() == 0;
+
         let allowed_time_ms = if chess_game.get_position().player == WHITE {
-            calculate_optimal_time_for_next_move(&white_time)
+            calculate_optimal_time_for_next_move(&white_time, is_first_move)
         } else {
-            calculate_optimal_time_for_next_move(&black_time)
+            calculate_optimal_time_for_next_move(&black_time, is_first_move)
         };
 
         let best_move = chess_game.search_best_move(allowed_time_ms, force_stopped);

@@ -45,7 +45,10 @@ const MAX_PV_LENGTH: usize = 128;
 const SORTING_PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
     0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
 ];
+
 const DELTA_MARGIN: Score = 200;
+
+const SINGULAR_MOVE_MARGIN: Score = 50;
 
 pub struct SearchInfo {
     pub score: Score,
@@ -131,10 +134,6 @@ impl SearchEngine {
         }
 
         loop {
-            if self.search_start_time.elapsed() >= soft_stop_time {
-                break;
-            }
-
             let score = self.ab_search(chess_position, alpha, beta, in_check, depth, 0);
 
             if self.aborted {
@@ -162,6 +161,10 @@ impl SearchEngine {
                 self.print_search_info(score, depth, &principal_variation);
             }
 
+            if self.search_start_time.elapsed() >= soft_stop_time {
+                break;
+            }
+
             if score.abs() > TERMINATE_SCORE {
                 break;
             }
@@ -180,7 +183,7 @@ impl SearchEngine {
         mut alpha: Score,
         beta: Score,
         in_check: bool,
-        mut depth: SearchDepth,
+        depth: SearchDepth,
         ply: SearchPly,
     ) -> Score {
         self.searched_node_count += 1;
@@ -194,10 +197,6 @@ impl SearchEngine {
 
         if ply > 0 && chess_position.is_draw() {
             return 0;
-        }
-
-        if in_check {
-            depth += 1;
         }
 
         let safety_check = chess_position.white_all_bitboard * chess_position.black_all_bitboard;
@@ -224,6 +223,7 @@ impl SearchEngine {
         }
 
         let hash_move;
+        let mut is_hash_move_singular = false;
 
         if let Some(entry) = hash_entry {
             hash_move = entry.chess_move;
@@ -252,6 +252,7 @@ impl SearchEngine {
             if !hash_move.is_empty() {
                 best_move = hash_move;
                 valid_move_count += 1;
+                is_hash_move_singular = true;
             }
         } else {
             hash_move = EMPTY_CHESS_MOVE;
@@ -260,6 +261,8 @@ impl SearchEngine {
         if depth == 0 {
             return self.q_search(chess_position, alpha, beta, ply);
         }
+
+        let mut under_mate_threat = false;
 
         if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
             let static_eval = chess_position.get_static_score();
@@ -279,7 +282,9 @@ impl SearchEngine {
                 chess_position.unmake_null_move(saved_enpassant_square);
 
                 if scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
-                    return beta;
+                    return scout_score;
+                } else if scout_score < -TERMINATE_SCORE {
+                    under_mate_threat = true;
                 }
             }
         }
@@ -306,7 +311,7 @@ impl SearchEngine {
                 self.update_hash(&TableEntry {
                     key: chess_position.hash_key,
                     safety_check,
-                    score: beta,
+                    score,
                     depth,
                     hash_age,
                     flag: HashFlag::LowBound,
@@ -319,12 +324,16 @@ impl SearchEngine {
                         [last_move.from_square][last_move.to_square] = best_move;
                 }
 
-                return beta;
+                return score;
             }
 
             if score > alpha {
                 alpha = score;
                 alpha_raised = true;
+            }
+
+            if score - SINGULAR_MOVE_MARGIN < alpha {
+                is_hash_move_singular = false;
             }
         }
 
@@ -407,7 +416,7 @@ impl SearchEngine {
                     key: chess_position.hash_key,
                     safety_check: chess_position.white_all_bitboard
                         * chess_position.black_all_bitboard,
-                    score: beta,
+                    score,
                     depth,
                     hash_age,
                     flag: HashFlag::LowBound,
@@ -417,16 +426,17 @@ impl SearchEngine {
                 if ply > 0 {
                     let last_move = chess_position.get_last_move();
                     self.counter_move_table[(chess_position.player ^ BLACK) as usize]
-                        [last_move.from_square][last_move.to_square] = best_move;
+                        [last_move.from_square][last_move.to_square] = chess_move;
                 }
 
-                return beta;
+                return score;
             }
 
             if score > alpha {
                 alpha = score;
                 best_move = chess_move;
                 alpha_raised = true;
+                is_hash_move_singular = false;
             }
         }
 
@@ -469,7 +479,7 @@ impl SearchEngine {
                 );
             } else {
                 let depth_reduction =
-                    if !in_check && !gives_check && depth > 1 && sortable_chess_move.reducable {
+                    if !in_check && !gives_check && !under_mate_threat && depth > 1 && sortable_chess_move.reducable {
                         u16_sqrt(depth).min(depth - 1)
                     } else {
                         0
@@ -507,7 +517,7 @@ impl SearchEngine {
                     key: chess_position.hash_key,
                     safety_check: chess_position.white_all_bitboard
                         * chess_position.black_all_bitboard,
-                    score: beta,
+                    score,
                     depth,
                     hash_age,
                     flag: HashFlag::LowBound,
@@ -517,7 +527,7 @@ impl SearchEngine {
                 if ply > 0 {
                     let last_move = chess_position.get_last_move();
                     self.counter_move_table[(chess_position.player ^ BLACK) as usize]
-                        [last_move.from_square][last_move.to_square] = best_move;
+                        [last_move.from_square][last_move.to_square] = chess_move;
                 }
 
                 if ply < MAX_PV_LENGTH {
@@ -536,13 +546,14 @@ impl SearchEngine {
                         [searched_quiet_chess_move.to_square] -= history_score_change;
                 }
 
-                return beta;
+                return score;
             }
 
             if score > alpha {
                 alpha = score;
                 best_move = chess_move;
                 alpha_raised = true;
+                is_hash_move_singular = false;
 
                 if ply < MAX_PV_LENGTH {
                     self.killer_table[chess_position.player as usize][ply][KILLER_INDEX_RAISE] =
@@ -562,6 +573,53 @@ impl SearchEngine {
             } else {
                 0
             };
+        }
+
+        if (is_hash_move_singular || under_mate_threat) && beta - alpha > 1 {
+            let extended_depth = depth + 1;
+            let saved_state = chess_position.make_move(&hash_move);
+
+            let gives_check = is_in_check(chess_position, chess_position.player);
+
+            let score = -self.ab_search(
+                chess_position,
+                -beta,
+                -alpha,
+                gives_check,
+                extended_depth - 1,
+                ply + 1,
+            );
+
+            chess_position.unmake_move(&hash_move, saved_state);
+
+            if self.aborted {
+                return alpha;
+            }
+
+            if score >= beta {
+                self.update_hash(&TableEntry {
+                    key: chess_position.hash_key,
+                    safety_check: chess_position.white_all_bitboard
+                        * chess_position.black_all_bitboard,
+                    score,
+                    depth: extended_depth,
+                    hash_age,
+                    flag: HashFlag::LowBound,
+                    chess_move: hash_move,
+                });
+
+                if ply > 0 {
+                    let last_move = chess_position.get_last_move();
+                    self.counter_move_table[(chess_position.player ^ BLACK) as usize]
+                        [last_move.from_square][last_move.to_square] = hash_move;
+                }
+
+                return score;
+            }
+
+            if score > alpha {
+                alpha = score;
+            }
         }
 
         if alpha_raised {
@@ -610,7 +668,7 @@ impl SearchEngine {
         let static_eval = chess_position.get_static_score();
 
         if static_eval >= beta {
-            return beta;
+            return static_eval;
         }
 
         if static_eval > alpha {
@@ -650,7 +708,7 @@ impl SearchEngine {
             }
 
             if score >= beta {
-                return beta;
+                return score;
             }
 
             if score > alpha {

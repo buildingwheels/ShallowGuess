@@ -7,7 +7,7 @@ use crate::types::{ChessPiece, ChessSquare, Player, Score};
 use crate::util::{FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
 use std::f32::consts::E;
 
-pub type NetworkIntValue = i32;
+pub type NetworkIntValue = i16;
 pub type NetworkFloatValue = f32;
 
 const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
@@ -20,8 +20,8 @@ pub const fn calculate_network_input_layer_index(
 }
 
 #[inline(always)]
-fn clipped_relu(x: NetworkFloatValue) -> NetworkFloatValue {
-    x.max(0.).min(1.)
+fn relu(x: NetworkFloatValue) -> NetworkFloatValue {
+    x.max(0.)
 }
 
 #[inline(always)]
@@ -110,16 +110,16 @@ impl Network {
         let mut hidden_layer = [0.; HIDDEN_LAYER_SIZE];
 
         if player == WHITE {
-            for i in 0..HIDDEN_LAYER_SIZE {
-                hidden_layer[i] = clipped_relu(
-                    self.white_accumulated_layer[i] as NetworkFloatValue * self.scaling_factor
+            for (i, accumulated) in self.white_accumulated_layer.iter().enumerate() {
+                hidden_layer[i] = relu(
+                    *accumulated as NetworkFloatValue * self.scaling_factor
                         + self.hidden_layer_biases[i],
                 );
             }
         } else {
-            for i in 0..HIDDEN_LAYER_SIZE {
-                hidden_layer[i] = clipped_relu(
-                    self.black_accumulated_layer[i] as NetworkFloatValue * self.scaling_factor
+            for (i, accumulated) in self.black_accumulated_layer.iter().enumerate() {
+                hidden_layer[i] = relu(
+                    *accumulated as NetworkFloatValue * self.scaling_factor
                         + self.hidden_layer_biases[i],
                 );
             }
