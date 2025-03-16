@@ -177,8 +177,8 @@ impl Network {
 fn win_probability_to_centi_pawn_score(win_probability: NetworkFloatValue) -> Score {
     (((win_probability.ln() - (1.0 - win_probability).ln()) / CENTI_PAWN_SCORE_SCALING_FACTOR)
         as Score)
-        .min(TERMINATE_SCORE - 1)
-        .max(-TERMINATE_SCORE + 1)
+        .min(TERMINATE_SCORE)
+        .max(-TERMINATE_SCORE)
 }
 
 fn load_default_weights_and_biases(network: &mut Network) {

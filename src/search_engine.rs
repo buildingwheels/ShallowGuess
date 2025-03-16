@@ -25,8 +25,8 @@ type CounterMoveTable = [[[ChessMove; CHESS_SQUARE_COUNT]; CHESS_SQUARE_COUNT]; 
 
 const WINDOW_SIZE: Score = 50;
 
-const HISTORY_SCORE_SHIFT_FACTOR_CUTOFF: usize = 7;
-const HISTORY_SCORE_SHIFT_FACTOR_RAISE: usize = 1;
+const HISTORY_SCORE_SHIFT_FACTOR_CUTOFF: usize = 9;
+const HISTORY_SCORE_SHIFT_FACTOR_RAISE: usize = 5;
 const HISTORY_SCORE_SHIFT_FACTOR_DECAY: usize = 1;
 const HISTORY_DECAY_INTERVAL: NodeCount = 1023;
 
@@ -183,7 +183,7 @@ impl SearchEngine {
         mut alpha: Score,
         beta: Score,
         in_check: bool,
-        depth: SearchDepth,
+        mut depth: SearchDepth,
         ply: SearchPly,
     ) -> Score {
         self.searched_node_count += 1;
@@ -259,7 +259,11 @@ impl SearchEngine {
         }
 
         if depth == 0 {
-            return self.q_search(chess_position, alpha, beta, ply);
+            if !in_check {
+                return self.q_search(chess_position, alpha, beta, ply);
+            }
+
+            depth += 1;
         }
 
         let mut under_mate_threat = false;
@@ -478,12 +482,16 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
-                let depth_reduction =
-                    if !in_check && !gives_check && !under_mate_threat && depth > 1 && sortable_chess_move.reducable {
-                        u16_sqrt(depth).min(depth - 1)
-                    } else {
-                        0
-                    };
+                let depth_reduction = if !in_check
+                    && !gives_check
+                    && !under_mate_threat
+                    && depth > 1
+                    && sortable_chess_move.reducable
+                {
+                    u16_sqrt(depth).min(depth - 1)
+                } else {
+                    0
+                };
 
                 score = -self.ab_search(
                     chess_position,
@@ -575,7 +583,7 @@ impl SearchEngine {
             };
         }
 
-        if (is_hash_move_singular || under_mate_threat) && beta - alpha > 1 {
+        if is_hash_move_singular && beta - alpha > 1 {
             let extended_depth = depth + 1;
             let saved_state = chess_position.make_move(&hash_move);
 
@@ -632,7 +640,7 @@ impl SearchEngine {
                 flag: HashFlag::Exact,
                 chess_move: best_move,
             });
-        } else if !best_move.is_empty() {
+        } else {
             self.update_hash(&TableEntry {
                 key: chess_position.hash_key,
                 safety_check,

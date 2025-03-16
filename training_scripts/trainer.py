@@ -9,8 +9,6 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torch.ao.quantization as quantization
 
-torch.set_default_device('cpu')
-
 from model import ShallowGuessNetwork
 
 
@@ -48,7 +46,9 @@ sample_size = int(sys.argv[5])
 
 print(f"Training for hidden_layer_size={hidden_layer_size}, data_dir={data_dir}, model_export_path={model_export_path}, max_epochs={max_epochs}")
 
-model = ShallowGuessNetwork(hidden_layer_size)
+device = torch.device('cuda')
+
+model = ShallowGuessNetwork(hidden_layer_size).to(device)
 model.qconfig = quantization.default_qconfig
 quantization.prepare_qat(model, inplace=True)
 
@@ -59,7 +59,7 @@ if len(sys.argv) > 6:
     print(f"Loaded existing model {existing_pth_file}")
 
 criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.0005)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 file_list = [os.path.join(data_dir, f) for f in os.listdir(data_dir)]
 
@@ -93,9 +93,12 @@ for epoch in range(max_epochs):
     for file_idx, file_path in enumerate(selected_files):
         print(f"Processing file: {file_idx + 1}/{num_selected_files}: {file_path}")
         dataset = FileDataset(file_path)
-        dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+        dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
         for batch_idx, (batch_features, batch_results) in enumerate(dataloader):
+            batch_features = batch_features.to(device)
+            batch_results = batch_results.to(device)
+
             optimizer.zero_grad()
             outputs = model(batch_features)
             loss = criterion(outputs, batch_results)
@@ -111,13 +114,14 @@ for epoch in range(max_epochs):
 
             progress = epoch_samples_trained / (len(dataset) * num_selected_files) * 100.
             batch_count += 1
+            batch_idx = batch_idx + 1
 
             if batch_idx % 100 == 0:
                 print(
                     f"Trained [{(total_samples_trained / 1000000.):.2f}M Positions], "
                     f"Epoch [{epoch}/{max_epochs}], "
                     f"File [{file_idx + 1}/{num_selected_files}], "
-                    f"Batch [{batch_idx + 1}/{len(dataloader)}], "
+                    f"Batch [{batch_idx}/{len(dataloader)}], "
                     f"Progress [{progress:.2f}%], "
                     f"Batch Loss [{batch_loss:.4f}], "
                     f"Epoch Loss [{(epoch_loss / batch_count):.4f}], "
