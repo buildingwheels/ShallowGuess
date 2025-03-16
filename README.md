@@ -26,7 +26,6 @@ A strong UCI-compatible chess engine powered by neural networks.
 - Null Move Pruning
 - Delta Pruning
 - Singular Move Extensions
-- Mate Threat Extensions
 
 ## Hashing & Transposition
 - Zobrist Hashing
@@ -46,7 +45,7 @@ The following binaries are pre-compiled and attached in each release:
 - Windows x86-64 AVX2
 
 ### Compile Natively
-There trained models are under the `resources/models/` folder.
+The trained models are placed under the `resources/models/` folder.
 The associated weights have been exported into the `resources/weights/` folder with `training_scripts/export.py`.
 
 You can modify `config/network.cfg` to load one of the trained models.
