@@ -127,10 +127,12 @@ impl SearchEngine {
         let soft_stop_time = allowed_time / 2;
         let in_check = is_in_check(chess_position, chess_position.player);
 
-        let (has_forced_move, forced_move) = check_for_forced_move(chess_position, in_check);
+        if in_check {
+            let (has_forced_move, forced_move) = check_for_forced_move(chess_position, in_check);
 
-        if has_forced_move {
-            return forced_move;
+            if has_forced_move {
+                return forced_move;
+            }
         }
 
         loop {
@@ -138,16 +140,6 @@ impl SearchEngine {
 
             if self.aborted {
                 break;
-            }
-
-            if score <= alpha {
-                alpha = -MATE_SCORE;
-                continue;
-            }
-
-            if score >= beta {
-                beta = MATE_SCORE;
-                continue;
             }
 
             let mut principal_variation = Vec::new();
@@ -159,6 +151,16 @@ impl SearchEngine {
 
             if show_output {
                 self.print_search_info(score, depth, &principal_variation);
+            }
+
+            if score <= alpha {
+                alpha = -MATE_SCORE;
+                continue;
+            }
+
+            if score >= beta {
+                beta = MATE_SCORE;
+                continue;
             }
 
             if self.search_start_time.elapsed() >= soft_stop_time {
@@ -268,10 +270,8 @@ impl SearchEngine {
 
         let mut under_mate_threat = false;
 
-        if !in_check && beta - alpha == 1 && beta > -TERMINATE_SCORE {
-            let static_eval = chess_position.get_static_score();
-
-            if depth > NULL_MOVE_PRUNING_MIN_DEPTH && static_eval >= beta {
+        if ply > 0 && !in_check && depth > NULL_MOVE_PRUNING_MIN_DEPTH && beta > -TERMINATE_SCORE {
+            if chess_position.get_static_score() >= beta {
                 let saved_enpassant_square = chess_position.make_null_move();
 
                 let scout_score = -self.ab_search(
@@ -285,7 +285,7 @@ impl SearchEngine {
 
                 chess_position.unmake_null_move(saved_enpassant_square);
 
-                if scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
+                if beta - alpha == 1 && scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
                     return scout_score;
                 } else if scout_score < -TERMINATE_SCORE {
                     under_mate_threat = true;

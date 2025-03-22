@@ -26,6 +26,7 @@ A strong UCI-compatible chess engine powered by neural networks.
 - Null Move Pruning
 - Delta Pruning
 - Singular Move Extensions
+- Mate Threat Detection
 
 ## Hashing & Transposition
 - Zobrist Hashing
@@ -75,7 +76,7 @@ cargo run --bin gen_training_set --release raw-fen.txt pre-process-fen.txt resul
 Use scripts provided in the `training_scripts` folder:
 1. Run the following command to start training:
 ```bash
-python training_scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> <existing-model-file (optional)>
+python training_scripts/trainer.py <hidden-layer-size> <training-data-folder> <output-folder> <max-epochs> <sample-size> (and a few other optional parameters, see code to find our more)
 ```
 
 2. After training is completed, run the following command to export weights:
@@ -88,12 +89,12 @@ python training_scripts/export.py <hidden-layer-size> <model-file> <output-weigh
 [pgn-extract](https://www.cs.kent.ac.uk/people/staff/djb/pgn-extract/) was used for extracting training positions from PGN files.
 
 ### CCRL (Computer Chess Rating Lists)
-50% of the training data were generated based on history games found on CCRL website.
+60% of the training data were generated based on history games found on CCRL website.
 
 ### Lichess Open Database & Lichess Elite Database
-50% of the training data were generated from games randomly selected from these websites:
+40%% of the training data were generated from games randomly selected from these websites:
 - [Lichess Open Database](https://database.lichess.org/)
 - [Lichess Elite Database](https://database.nikonoel.fr/)
 
 ### TCEC (Top Chess Engine Championship)
-The training data for the intitial experimental versions were generated from [TCEC](https://tcec-chess.com/) history tournament games.
+The training data for the intitial experimental versions were generated from [TCEC](https://tcec-chess.com/) history tournament games. Not used in the training of release versions.

@@ -12,10 +12,12 @@ class ShallowGuessNetwork(nn.Module):
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
         self.dequant = quantization.DeQuantStub()
+        self.dropout = nn.Dropout(p=0.05)
 
     def forward(self, x):
         x = self.fc1(x)
         x = self.dequant(x)
+        x = self.dropout(x)
         x = self.relu(x)
         x = self.fc2(x)
         x = self.sigmoid(x)
