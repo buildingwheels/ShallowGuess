@@ -47,8 +47,6 @@ const SORTING_PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
     0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
 ];
 
-const DELTA_MARGIN: Score = 200;
-
 const SINGULAR_MOVE_MARGIN: Score = 50;
 
 pub struct SearchInfo {
@@ -192,7 +190,7 @@ impl SearchEngine {
         mut alpha: Score,
         beta: Score,
         in_check: bool,
-        mut depth: SearchDepth,
+        depth: SearchDepth,
         ply: SearchPly,
     ) -> Score {
         self.searched_node_count += 1;
@@ -268,11 +266,7 @@ impl SearchEngine {
         }
 
         if depth == 0 {
-            if !in_check {
-                return self.q_search(chess_position, alpha, beta, ply);
-            }
-
-            depth += 1;
+            return self.q_search(chess_position, alpha, beta, ply);
         }
 
         let mut under_mate_threat = false;
@@ -680,14 +674,18 @@ impl SearchEngine {
             return alpha;
         }
 
-        let static_eval = chess_position.get_static_score();
+        let in_check = is_in_check(chess_position, chess_position.player);
 
-        if static_eval >= beta {
-            return static_eval;
-        }
+        if !in_check {
+            let static_eval = chess_position.get_static_score();
 
-        if static_eval > alpha {
-            alpha = static_eval;
+            if static_eval >= beta {
+                return static_eval;
+            }
+
+            if static_eval > alpha {
+                alpha = static_eval;
+            }
         }
 
         let mut captures_and_promotions = self.sort_captures_and_promotions(
@@ -698,14 +696,6 @@ impl SearchEngine {
 
         while let Some(sortable_chess_move) = captures_and_promotions.pop() {
             let chess_move = sortable_chess_move.chess_move;
-
-            let captured_value = SORTING_PIECE_VALS
-                [chess_position.board[chess_move.to_square] as usize]
-                + SORTING_PIECE_VALS[chess_move.promotion_piece as usize];
-
-            if static_eval + captured_value + DELTA_MARGIN < alpha {
-                continue;
-            }
 
             let saved_state = chess_position.make_move(&chess_move);
 
