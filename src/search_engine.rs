@@ -190,7 +190,7 @@ impl SearchEngine {
         mut alpha: Score,
         beta: Score,
         in_check: bool,
-        depth: SearchDepth,
+        mut depth: SearchDepth,
         ply: SearchPly,
     ) -> Score {
         self.searched_node_count += 1;
@@ -266,7 +266,11 @@ impl SearchEngine {
         }
 
         if depth == 0 {
-            return self.q_search(chess_position, alpha, beta, ply);
+            if in_check {
+                depth += 1;
+            } else {
+                return self.q_search(chess_position, alpha, beta, ply);
+            }
         }
 
         let mut under_mate_threat = false;
