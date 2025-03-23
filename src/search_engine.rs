@@ -23,7 +23,8 @@ type HistoryTable = [[Score; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
 type KillerTable = [[[ChessMove; KILLER_COUNT]; MAX_PV_LENGTH]; PLAYER_COUNT];
 type CounterMoveTable = [[[ChessMove; CHESS_SQUARE_COUNT]; CHESS_SQUARE_COUNT]; PLAYER_COUNT];
 
-const WINDOW_SIZE: Score = 50;
+const WINDOW_SIZE_SMALL: Score = 10;
+const WINDOW_SIZE_LARGE: Score = 50;
 
 const HISTORY_SCORE_SHIFT_FACTOR_CUTOFF: usize = 9;
 const HISTORY_SCORE_SHIFT_FACTOR_RAISE: usize = 5;
@@ -135,6 +136,8 @@ impl SearchEngine {
             }
         }
 
+        let mut researched = false;
+
         loop {
             let score = self.ab_search(chess_position, alpha, beta, in_check, depth, 0);
 
@@ -153,13 +156,20 @@ impl SearchEngine {
                 self.print_search_info(score, depth, &principal_variation);
             }
 
-            if score <= alpha {
-                alpha = -MATE_SCORE;
-                continue;
+            if score.abs() > TERMINATE_SCORE {
+                break;
             }
 
-            if score >= beta {
-                beta = MATE_SCORE;
+            if score <= alpha || score >= beta {
+                if researched {
+                    alpha = -MATE_SCORE;
+                    beta = MATE_SCORE;
+                } else {
+                    alpha = score - WINDOW_SIZE_LARGE;
+                    beta = score + WINDOW_SIZE_LARGE;
+                    researched = true;
+                }
+
                 continue;
             }
 
@@ -167,13 +177,10 @@ impl SearchEngine {
                 break;
             }
 
-            if score.abs() > TERMINATE_SCORE {
-                break;
-            }
-
             depth += 1;
-            alpha = score - WINDOW_SIZE;
-            beta = score + WINDOW_SIZE;
+            alpha = score - WINDOW_SIZE_SMALL;
+            beta = score + WINDOW_SIZE_SMALL;
+            researched = false;
         }
 
         best_move

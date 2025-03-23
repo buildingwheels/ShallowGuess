@@ -118,7 +118,7 @@ if __name__ == "__main__":
                         f"Batch [{batch_idx + 1}/{len(dataloader)}], "
                         f"Progress [{progress:.2f}%], "
                         f"Batch Loss [{batch_loss:.3f}], "
-                        f"Epoch Loss [{(epoch_loss / batch_count):.5f}], "
+                        f"Epoch Loss [{(epoch_loss / batch_count):.6f}], "
                         f"Training time: {datetime.now() - start_time}"
                     )
 
