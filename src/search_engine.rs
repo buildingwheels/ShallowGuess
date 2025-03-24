@@ -148,6 +148,8 @@ impl SearchEngine {
 
             if !principal_variation.is_empty() {
                 best_move = principal_variation[0];
+            } else {
+                println!("Failed to find move for {} with alpha={} beta={}", chess_position.to_fen(), alpha, beta);
             }
 
             if show_output {
@@ -235,7 +237,7 @@ impl SearchEngine {
         if let Some(entry) = hash_entry {
             hash_move = entry.chess_move;
 
-            if entry.depth >= depth && entry.score != 0 {
+            if entry.depth >= depth && entry.score != 0 && entry.score.abs() < TERMINATE_SCORE {
                 match entry.flag {
                     HashFlag::LowBound => {
                         if entry.score >= beta {
@@ -248,10 +250,7 @@ impl SearchEngine {
                         }
                     }
                     HashFlag::Exact => {
-                        let score = entry.score;
-                        if score.abs() < TERMINATE_SCORE {
-                            return score;
-                        }
+                        return entry.score;
                     }
                 }
             }
@@ -723,6 +722,10 @@ impl SearchEngine {
             if score > alpha {
                 alpha = score;
             }
+        }
+
+        if alpha == -MATE_SCORE {
+            alpha = -MATE_SCORE + ply as Score;
         }
 
         alpha

@@ -3,9 +3,11 @@
 TARGET_FEATURES=(
     "sse:+sse,+sse2,+sse3,+ssse3,+sse4.1,+sse4.2"
     "avx2:+avx2"
+    "amd_optimized:+avx2,+fma,+bmi1,+bmi2"
 )
 
 FINAL_OUTPUT_DIR="binaries"
+mkdir -p "$FINAL_OUTPUT_DIR"
 
 for features in "${TARGET_FEATURES[@]}"; do
     name="${features%%:*}"
