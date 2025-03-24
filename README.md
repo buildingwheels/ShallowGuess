@@ -24,7 +24,6 @@ A strong UCI-compatible chess engine powered by neural networks.
 - History Heuristics
 - Killer Heuristics
 - Null Move Pruning
-- Delta Pruning
 - Singular Move Extensions
 - Mate Threat Detection
 
