@@ -148,8 +148,8 @@ impl SearchEngine {
 
             if !principal_variation.is_empty() {
                 best_move = principal_variation[0];
-            } else {
-                println!("Failed to find move for {} with alpha={} beta={}", chess_position.to_fen(), alpha, beta);
+            } else if alpha == -MATE_SCORE && beta == MATE_SCORE {
+                self.transposition_table.clear();
             }
 
             if show_output {
@@ -157,7 +157,7 @@ impl SearchEngine {
             }
 
             if score.abs() > TERMINATE_SCORE {
-                break;
+                self.transposition_table.clear();
             }
 
             if score <= alpha || score >= beta {
@@ -268,7 +268,7 @@ impl SearchEngine {
             if in_check {
                 depth += 1;
             } else {
-                return self.q_search(chess_position, alpha, beta, ply);
+                return self.q_search(chess_position, alpha, beta, ply, 0);
             }
         }
 
@@ -665,6 +665,7 @@ impl SearchEngine {
         mut alpha: Score,
         beta: Score,
         ply: SearchPly,
+        q_ply: SearchPly,
     ) -> Score {
         self.searched_node_count += 1;
 
@@ -677,9 +678,7 @@ impl SearchEngine {
             return alpha;
         }
 
-        let in_check = is_in_check(chess_position, chess_position.player);
-
-        if !in_check {
+        if q_ply < 2 || !is_in_check(chess_position, chess_position.player) {
             let static_eval = chess_position.get_static_score();
 
             if static_eval >= beta {
@@ -707,7 +706,7 @@ impl SearchEngine {
                 continue;
             }
 
-            let score = -self.q_search(chess_position, -beta, -alpha, ply + 1);
+            let score = -self.q_search(chess_position, -beta, -alpha, ply + 1, q_ply + 1);
 
             chess_position.unmake_move(&chess_move, saved_state);
 
@@ -722,10 +721,6 @@ impl SearchEngine {
             if score > alpha {
                 alpha = score;
             }
-        }
-
-        if alpha == -MATE_SCORE {
-            alpha = -MATE_SCORE + ply as Score;
         }
 
         alpha
