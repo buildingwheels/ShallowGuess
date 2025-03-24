@@ -42,10 +42,12 @@ A strong UCI-compatible chess engine powered by neural networks.
 The following binaries are pre-compiled and attached in each release:
 - Linux x86-64 SSE
 - Linux x86-64 AVX2
+- Linux x86-64 AMD
 - Windows x86-64 SSE
 - Windows x86-64 AVX2
+- Windows x86-64 AMD
 
-### Compile Natively
+### Compile Natively (Strongly Recommended)
 The trained models are placed under the `resources/models/` folder.
 The associated weights have been exported into the `resources/weights/` folder with `training_scripts/export.py`.
 
