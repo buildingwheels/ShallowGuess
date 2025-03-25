@@ -47,8 +47,6 @@ const SORTING_PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
     0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
 ];
 
-const SINGULAR_MOVE_MARGIN: Score = 50;
-
 pub struct SearchInfo {
     pub score: Score,
     pub depth: SearchDepth,
@@ -232,7 +230,6 @@ impl SearchEngine {
         }
 
         let hash_move;
-        let mut is_hash_move_singular = false;
 
         if let Some(entry) = hash_entry {
             hash_move = entry.chess_move;
@@ -258,7 +255,6 @@ impl SearchEngine {
             if !hash_move.is_empty() {
                 best_move = hash_move;
                 valid_move_count += 1;
-                is_hash_move_singular = true;
             }
         } else {
             hash_move = EMPTY_CHESS_MOVE;
@@ -268,7 +264,7 @@ impl SearchEngine {
             if in_check {
                 depth += 1;
             } else {
-                return self.q_search(chess_position, alpha, beta, ply, 0);
+                return self.q_search(chess_position, alpha, beta, ply);
             }
         }
 
@@ -338,10 +334,6 @@ impl SearchEngine {
             if score > alpha {
                 alpha = score;
                 alpha_raised = true;
-            }
-
-            if score - SINGULAR_MOVE_MARGIN < alpha {
-                is_hash_move_singular = false;
             }
         }
 
@@ -444,7 +436,6 @@ impl SearchEngine {
                 alpha = score;
                 best_move = chess_move;
                 alpha_raised = true;
-                is_hash_move_singular = false;
             }
         }
 
@@ -565,7 +556,6 @@ impl SearchEngine {
                 alpha = score;
                 best_move = chess_move;
                 alpha_raised = true;
-                is_hash_move_singular = false;
 
                 if ply < MAX_PV_LENGTH {
                     self.killer_table[chess_position.player as usize][ply][KILLER_INDEX_RAISE] =
@@ -585,53 +575,6 @@ impl SearchEngine {
             } else {
                 0
             };
-        }
-
-        if is_hash_move_singular && beta - alpha > 1 {
-            let extended_depth = depth + 1;
-            let saved_state = chess_position.make_move(&hash_move);
-
-            let gives_check = is_in_check(chess_position, chess_position.player);
-
-            let score = -self.ab_search(
-                chess_position,
-                -beta,
-                -alpha,
-                gives_check,
-                extended_depth - 1,
-                ply + 1,
-            );
-
-            chess_position.unmake_move(&hash_move, saved_state);
-
-            if self.aborted {
-                return alpha;
-            }
-
-            if score >= beta {
-                self.update_hash(&TableEntry {
-                    key: chess_position.hash_key,
-                    safety_check: chess_position.white_all_bitboard
-                        * chess_position.black_all_bitboard,
-                    score,
-                    depth: extended_depth,
-                    hash_age,
-                    flag: HashFlag::LowBound,
-                    chess_move: hash_move,
-                });
-
-                if ply > 0 {
-                    let last_move = chess_position.get_last_move();
-                    self.counter_move_table[(chess_position.player ^ BLACK) as usize]
-                        [last_move.from_square][last_move.to_square] = hash_move;
-                }
-
-                return score;
-            }
-
-            if score > alpha {
-                alpha = score;
-            }
         }
 
         if alpha_raised {
@@ -665,7 +608,6 @@ impl SearchEngine {
         mut alpha: Score,
         beta: Score,
         ply: SearchPly,
-        q_ply: SearchPly,
     ) -> Score {
         self.searched_node_count += 1;
 
@@ -678,7 +620,7 @@ impl SearchEngine {
             return alpha;
         }
 
-        if q_ply < 2 || !is_in_check(chess_position, chess_position.player) {
+        if !is_in_check(chess_position, chess_position.player) {
             let static_eval = chess_position.get_static_score();
 
             if static_eval >= beta {
@@ -688,6 +630,8 @@ impl SearchEngine {
             if static_eval > alpha {
                 alpha = static_eval;
             }
+        } else if beta - alpha > 1 {
+            return self.ab_search(chess_position, alpha, beta, true, 1, ply);
         }
 
         let mut captures_and_promotions = self.sort_captures_and_promotions(
@@ -706,7 +650,7 @@ impl SearchEngine {
                 continue;
             }
 
-            let score = -self.q_search(chess_position, -beta, -alpha, ply + 1, q_ply + 1);
+            let score = -self.q_search(chess_position, -beta, -alpha, ply + 1);
 
             chess_position.unmake_move(&chess_move, saved_state);
 

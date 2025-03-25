@@ -24,7 +24,6 @@ A strong UCI-compatible chess engine powered by neural networks.
 - History Heuristics
 - Killer Heuristics
 - Null Move Pruning
-- Singular Move Extensions
 - Mate Threat Detection
 
 ## Hashing & Transposition
@@ -41,10 +40,8 @@ A strong UCI-compatible chess engine powered by neural networks.
 The following binaries are pre-compiled and attached in each release:
 - Linux x86-64 SSE
 - Linux x86-64 AVX2
-- Linux x86-64 AMD
 - Windows x86-64 SSE
 - Windows x86-64 AVX2
-- Windows x86-64 AMD
 
 ### Compile Natively (Strongly Recommended)
 The trained models are placed under the `resources/models/` folder.
