@@ -35,8 +35,11 @@ const KILLER_COUNT: usize = 2;
 const KILLER_INDEX_CUTOFF: usize = 0;
 const KILLER_INDEX_RAISE: usize = 1;
 
-const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 7;
-const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 3;
+const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 6;
+const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
+
+const FP_MAX_DEPTH: SearchDepth = 7;
+const FP_MARGIN_PER_DEPTH: Score = 120;
 
 const IID_MIN_DEPTH: SearchDepth = 7;
 const IID_SEARCH_DEPTH_REDUCTION: SearchDepth = 2;
@@ -103,12 +106,14 @@ impl SearchEngine {
         allowed_time: Duration,
         force_stopped: Arc<AtomicBool>,
         show_output: bool,
-    ) -> ChessMove {
+    ) -> (ChessMove, ChessMove) {
         self.search_start_time = Instant::now();
         self.allowed_search_time = allowed_time;
         self.force_stopped = force_stopped;
 
         let mut best_move = EMPTY_CHESS_MOVE;
+        let mut expected_responding_move = EMPTY_CHESS_MOVE;
+
         let mut depth = 1;
         let mut alpha = -MATE_SCORE;
         let mut beta = MATE_SCORE;
@@ -128,7 +133,7 @@ impl SearchEngine {
             let (has_forced_move, forced_move) = check_for_forced_move(chess_position, in_check);
 
             if has_forced_move {
-                return forced_move;
+                return (forced_move, EMPTY_CHESS_MOVE);
             }
         }
 
@@ -142,20 +147,24 @@ impl SearchEngine {
             }
 
             let mut principal_variation = Vec::new();
-            self.retrieve_principal_variation(chess_position, &mut principal_variation);
+            self.retrieve_principal_variation(
+                chess_position,
+                &mut principal_variation,
+                depth as usize,
+            );
 
             if !principal_variation.is_empty() {
                 best_move = principal_variation[0];
+
+                if principal_variation.len() > 1 {
+                    expected_responding_move = principal_variation[1];
+                }
             } else if alpha == -MATE_SCORE && beta == MATE_SCORE {
                 self.transposition_table.clear();
             }
 
             if show_output {
                 self.print_search_info(score, depth, &principal_variation);
-            }
-
-            if score.abs() > TERMINATE_SCORE {
-                self.transposition_table.clear();
             }
 
             if score <= alpha || score >= beta {
@@ -171,6 +180,10 @@ impl SearchEngine {
                 continue;
             }
 
+            if score.abs() > TERMINATE_SCORE {
+                self.transposition_table.clear();
+            }
+
             if self.search_start_time.elapsed() >= soft_stop_time {
                 break;
             }
@@ -181,7 +194,7 @@ impl SearchEngine {
             researched = false;
         }
 
-        best_move
+        (best_move, expected_responding_move)
     }
 
     fn ab_search(
@@ -202,12 +215,11 @@ impl SearchEngine {
             return alpha;
         }
 
-        if ply > 0 && chess_position.is_draw() {
+        if ply != 0 && chess_position.is_draw() {
             return 0;
         }
 
         let safety_check = chess_position.white_all_bitboard * chess_position.black_all_bitboard;
-        let hash_age = chess_position.full_move_count;
 
         let mut best_move = EMPTY_CHESS_MOVE;
 
@@ -268,10 +280,15 @@ impl SearchEngine {
             }
         }
 
-        let mut under_mate_threat = false;
+        if ply > 0 && !in_check && beta > -TERMINATE_SCORE {
+            let static_score = chess_position.get_static_score();
 
-        if ply > 0 && !in_check && depth > NULL_MOVE_PRUNING_MIN_DEPTH && beta > -TERMINATE_SCORE {
-            if chess_position.get_static_score() >= beta {
+            if depth <= FP_MAX_DEPTH && static_score - FP_MARGIN_PER_DEPTH * depth as Score >= beta
+            {
+                return beta;
+            }
+
+            if depth >= NULL_MOVE_PRUNING_MIN_DEPTH && static_score >= beta {
                 let saved_enpassant_square = chess_position.make_null_move();
 
                 let scout_score = -self.ab_search(
@@ -285,10 +302,8 @@ impl SearchEngine {
 
                 chess_position.unmake_null_move(saved_enpassant_square);
 
-                if beta - alpha == 1 && scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
-                    return scout_score;
-                } else if scout_score < -TERMINATE_SCORE {
-                    under_mate_threat = true;
+                if scout_score >= beta && scout_score != 0 && scout_score < TERMINATE_SCORE {
+                    return beta;
                 }
             }
         }
@@ -315,9 +330,8 @@ impl SearchEngine {
                 self.update_hash(&TableEntry {
                     key: chess_position.hash_key,
                     safety_check,
-                    score,
+                    score: beta,
                     depth,
-                    hash_age,
                     flag: HashFlag::LowBound,
                     chess_move: best_move,
                 });
@@ -328,7 +342,7 @@ impl SearchEngine {
                         [last_move.from_square][last_move.to_square] = best_move;
                 }
 
-                return score;
+                return beta;
             }
 
             if score > alpha {
@@ -416,9 +430,8 @@ impl SearchEngine {
                     key: chess_position.hash_key,
                     safety_check: chess_position.white_all_bitboard
                         * chess_position.black_all_bitboard,
-                    score,
+                    score: beta,
                     depth,
-                    hash_age,
                     flag: HashFlag::LowBound,
                     chess_move,
                 });
@@ -429,7 +442,7 @@ impl SearchEngine {
                         [last_move.from_square][last_move.to_square] = chess_move;
                 }
 
-                return score;
+                return beta;
             }
 
             if score > alpha {
@@ -477,16 +490,12 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
-                let depth_reduction = if !in_check
-                    && !gives_check
-                    && !under_mate_threat
-                    && depth > 1
-                    && sortable_chess_move.reducable
-                {
-                    u16_sqrt(depth).min(depth - 1)
-                } else {
-                    0
-                };
+                let depth_reduction =
+                    if !in_check && !gives_check && depth > 1 && sortable_chess_move.reducable {
+                        u16_sqrt(depth).min(depth - 1)
+                    } else {
+                        0
+                    };
 
                 score = -self.ab_search(
                     chess_position,
@@ -520,9 +529,8 @@ impl SearchEngine {
                     key: chess_position.hash_key,
                     safety_check: chess_position.white_all_bitboard
                         * chess_position.black_all_bitboard,
-                    score,
+                    score: beta,
                     depth,
-                    hash_age,
                     flag: HashFlag::LowBound,
                     chess_move,
                 });
@@ -549,7 +557,7 @@ impl SearchEngine {
                         [searched_quiet_chess_move.to_square] -= history_score_change;
                 }
 
-                return score;
+                return beta;
             }
 
             if score > alpha {
@@ -583,7 +591,6 @@ impl SearchEngine {
                 safety_check,
                 score: alpha,
                 depth,
-                hash_age,
                 flag: HashFlag::Exact,
                 chess_move: best_move,
             });
@@ -593,7 +600,6 @@ impl SearchEngine {
                 safety_check,
                 score: alpha,
                 depth,
-                hash_age,
                 flag: HashFlag::HighBound,
                 chess_move: best_move,
             });
@@ -620,18 +626,14 @@ impl SearchEngine {
             return alpha;
         }
 
-        if !is_in_check(chess_position, chess_position.player) {
-            let static_eval = chess_position.get_static_score();
+        let static_eval = chess_position.get_static_score();
 
-            if static_eval >= beta {
-                return static_eval;
-            }
+        if static_eval >= beta {
+            return beta;
+        }
 
-            if static_eval > alpha {
-                alpha = static_eval;
-            }
-        } else if beta - alpha > 1 {
-            return self.ab_search(chess_position, alpha, beta, true, 1, ply);
+        if static_eval > alpha {
+            alpha = static_eval;
         }
 
         let mut captures_and_promotions = self.sort_captures_and_promotions(
@@ -642,7 +644,6 @@ impl SearchEngine {
 
         while let Some(sortable_chess_move) = captures_and_promotions.pop() {
             let chess_move = sortable_chess_move.chess_move;
-
             let saved_state = chess_position.make_move(&chess_move);
 
             if is_invalid_position(chess_position) {
@@ -659,7 +660,7 @@ impl SearchEngine {
             }
 
             if score >= beta {
-                return score;
+                return beta;
             }
 
             if score > alpha {
@@ -927,7 +928,6 @@ impl SearchEngine {
             safety_check: chess_position.white_all_bitboard * chess_position.black_all_bitboard,
             score: chess_move_count as Score,
             depth,
-            hash_age: 0,
             flag: HashFlag::Exact,
             chess_move: EMPTY_CHESS_MOVE,
         });
@@ -939,8 +939,9 @@ impl SearchEngine {
         &mut self,
         chess_position: &mut ChessPosition,
         principal_variation: &mut Vec<ChessMove>,
+        max_depth: usize,
     ) {
-        if principal_variation.len() > MAX_PV_LENGTH {
+        if principal_variation.len() > max_depth {
             return;
         }
 
@@ -954,7 +955,7 @@ impl SearchEngine {
                 principal_variation.push(chess_move);
 
                 let saved_state = chess_position.make_move(&chess_move);
-                self.retrieve_principal_variation(chess_position, principal_variation);
+                self.retrieve_principal_variation(chess_position, principal_variation, max_depth);
                 chess_position.unmake_move(&chess_move, saved_state);
             }
         }

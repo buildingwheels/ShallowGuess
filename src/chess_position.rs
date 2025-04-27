@@ -264,9 +264,12 @@ impl ChessPosition {
             return true;
         }
 
-        let history_len = self.hash_key_history.len();
+        let mut search_index = self.hash_key_history.len();
+        let end_index = search_index - self.half_move_count as usize;
 
-        for search_index in 0..history_len {
+        while search_index > end_index {
+            search_index -= 1;
+
             if self.hash_key == self.hash_key_history[search_index] {
                 return true;
             }
@@ -284,32 +287,46 @@ impl ChessPosition {
     }
 
     pub fn make_null_move(&mut self) -> ChessSquare {
-        self.modify_hash();
         let saved_enpassant_square = self.enpassant_square;
-        self.enpassant_square = NO_SQUARE;
-        self.player ^= BLACK;
-        self.modify_hash();
+    
+        if self.enpassant_square != NO_SQUARE {
+            self.hash_key ^= ENPASSANT_SQUARE_HASH[self.enpassant_square];
+        }
 
-        return saved_enpassant_square;
+        self.enpassant_square = NO_SQUARE;
+
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
+        self.player ^= BLACK;
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
+
+        saved_enpassant_square
     }
 
     pub fn unmake_null_move(&mut self, saved_enpassant_square: ChessSquare) {
-        self.modify_hash();
-        self.enpassant_square = saved_enpassant_square;
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
         self.player ^= BLACK;
-        self.modify_hash();
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
+
+        self.enpassant_square = saved_enpassant_square;
+
+        if self.enpassant_square != NO_SQUARE {
+            self.hash_key ^= ENPASSANT_SQUARE_HASH[self.enpassant_square];
+        }
     }
 
     pub fn make_move(&mut self, chess_move: &ChessMove) -> RecoverablePositionState {
+        self.chess_move_history.push(*chess_move);
+        self.hash_key_history.push(self.hash_key);
+
         let saved_enpassant_square = self.enpassant_square;
         let saved_castling_flag = self.castling_flag;
         let saved_white_all_bitboard = self.white_all_bitboard;
         let saved_black_all_bitboard = self.black_all_bitboard;
         let saved_half_move_count = self.half_move_count;
 
-        self.chess_move_history.push(*chess_move);
-        self.hash_key_history.push(self.hash_key);
-        self.modify_hash();
+        if saved_enpassant_square != NO_SQUARE {
+            self.hash_key ^= ENPASSANT_SQUARE_HASH[saved_enpassant_square];
+        }
 
         self.full_move_count += 1;
         self.half_move_count += 1;
@@ -564,12 +581,19 @@ impl ChessPosition {
                     self.black_all_bitboard ^= from_square_mask | to_square_mask;
                     self.enpassant_square = to_square + CHESS_FILE_COUNT;
                 }
+
+                self.hash_key ^= ENPASSANT_SQUARE_HASH[self.enpassant_square];
             }
         }
 
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
         self.player ^= BLACK;
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
 
-        self.modify_hash();
+        if saved_castling_flag != self.castling_flag {
+            self.hash_key ^= CASTLING_FLAG_HASH[saved_castling_flag as usize];
+            self.hash_key ^= CASTLING_FLAG_HASH[self.castling_flag as usize];
+        }
 
         RecoverablePositionState {
             captured_piece,
@@ -583,13 +607,12 @@ impl ChessPosition {
 
     pub fn unmake_move(&mut self, chess_move: &ChessMove, saved_state: RecoverablePositionState) {
         self.chess_move_history.pop();
+        self.hash_key = self.hash_key_history.pop().unwrap();
 
         self.full_move_count -= 1;
         self.half_move_count = saved_state.saved_half_move_count;
         self.white_all_bitboard = saved_state.saved_white_all_bitboard;
         self.black_all_bitboard = saved_state.saved_black_all_bitboard;
-
-        self.hash_key = self.hash_key_history.pop().unwrap();
 
         self.enpassant_square = saved_state.saved_enpassant_square;
         self.castling_flag = saved_state.saved_castling_flag;
@@ -715,16 +738,6 @@ impl ChessPosition {
                 self.network.add(moved_piece, from_square);
                 self.network.remove(moved_piece, to_square);
             }
-        }
-    }
-
-    #[inline(always)]
-    fn modify_hash(&mut self) {
-        self.hash_key ^= PLAYER_HASH[self.player as usize];
-        self.hash_key ^= CASTLING_FLAG_HASH[self.castling_flag as usize];
-
-        if self.enpassant_square != NO_SQUARE {
-            self.hash_key ^= ENPASSANT_SQUARE_HASH[self.enpassant_square];
         }
     }
 }

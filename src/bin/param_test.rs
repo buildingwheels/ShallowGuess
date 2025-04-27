@@ -39,12 +39,14 @@ fn main() -> std::io::Result<()> {
 
                 println!("Testing [{}]", fen);
 
-                let best_move_str = format_chess_move(&search_engine.search_best_move(
+                let (best_move, _) = &search_engine.search_best_move(
                     &mut chess_position,
                     Duration::from_secs(search_time_secs),
                     Arc::new(AtomicBool::new(false)),
                     true,
-                ));
+                );
+
+                let best_move_str = format_chess_move(best_move);
 
                 if best_move_str == expected_best_move {
                     success_count += 1;

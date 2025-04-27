@@ -28,6 +28,7 @@ fn main() {
     let original_fen_file = args.next().unwrap();
     let processed_fen_file = args.next().unwrap();
     let output_file = args.next().unwrap();
+    let filter_non_static_posistions = args.next().unwrap().parse::<bool>().unwrap();
     let skip_count = args.next().unwrap().parse::<usize>().unwrap();
     let max_count = args.next().unwrap().parse::<usize>().unwrap();
     let batch_size = args.next().unwrap().parse::<usize>().unwrap();
@@ -38,10 +39,20 @@ fn main() {
         skip_count,
         max_count,
     );
-    generate_training_set(&processed_fen_file, &output_file, batch_size);
+    generate_training_set(
+        &processed_fen_file,
+        &output_file,
+        batch_size,
+        filter_non_static_posistions,
+    );
 }
 
-fn generate_training_set(raw_training_set_file: &str, output_file_path: &str, batch_count: usize) {
+fn generate_training_set(
+    raw_training_set_file: &str,
+    output_file_path: &str,
+    batch_count: usize,
+    filter_non_static_posistions: bool,
+) {
     let output_file = File::create(output_file_path).unwrap();
     let mut file_writer = LineWriter::new(output_file);
 
@@ -65,15 +76,18 @@ fn generate_training_set(raw_training_set_file: &str, output_file_path: &str, ba
             let mut chess_position = ChessPosition::new(Network::new());
             chess_position.set_from_fen(fen);
 
-            if is_in_check(&chess_position, chess_position.player) {
-                continue;
-            }
+            if filter_non_static_posistions {
+                if is_in_check(&chess_position, chess_position.player) {
+                    continue;
+                }
 
-            let static_score = get_material_score(&chess_position);
-            let q_score = exchange_search(&mut chess_position, static_score, static_score + 1, 0);
+                let static_score = get_material_score(&chess_position);
+                let q_score =
+                    exchange_search(&mut chess_position, static_score, static_score + 1, 0);
 
-            if q_score != static_score {
-                continue;
+                if q_score != static_score {
+                    continue;
+                }
             }
 
             let network_inputs = parse_network_inputs_from_fen(&chess_position);
@@ -134,6 +148,8 @@ fn generate_raw_training_set(
     let mut file_writer = LineWriter::new(output_file);
     let mut current_game_result = 0.;
     let mut position_count = 0;
+    let mut skip_current_game = false;
+    let mut skipped_count = 0;
 
     if let Ok(lines) = read_lines(fen_file) {
         for line in lines.flatten() {
@@ -143,7 +159,9 @@ fn generate_raw_training_set(
                 continue;
             }
 
-            if line.contains("Result") {
+            if line.contains("Termination") {
+                skip_current_game = true;
+            } else if line.contains("Result") {
                 if line.contains("1/2") {
                     current_game_result = 0.5;
                 } else if line.contains("0-1") {
@@ -153,8 +171,13 @@ fn generate_raw_training_set(
                 }
 
                 position_count = 0;
-                continue;
+                skip_current_game = false;
             } else if !line.contains("[") {
+                if skip_current_game {
+                    skipped_count += 1;
+                    continue;
+                }
+
                 position_count += 1;
 
                 if position_count > skip_opening_positions
@@ -169,8 +192,8 @@ fn generate_raw_training_set(
     }
 
     println!(
-        "Completed generating raw training set to: {}",
-        output_file_path
+        "Completed generating raw training set with size {} (skipped {}) to: {}",
+        position_count, skipped_count, output_file_path
     );
 }
 

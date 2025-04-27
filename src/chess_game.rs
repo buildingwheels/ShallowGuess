@@ -1,7 +1,7 @@
 use crate::chess_position::ChessPosition;
 use crate::fen::fen_str_constants::START_POS;
 use crate::search_engine::SearchEngine;
-use crate::types::{ChessMove, MilliSeconds, SearchDepth};
+use crate::types::{ChessMove, MilliSeconds, SearchDepth, EMPTY_CHESS_MOVE};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 pub struct ChessGame {
     chess_position: ChessPosition,
     search_engine: SearchEngine,
+    expected_responding_move: ChessMove,
     search_count: usize,
 }
 
@@ -17,6 +18,7 @@ impl ChessGame {
         ChessGame {
             chess_position,
             search_engine,
+            expected_responding_move: EMPTY_CHESS_MOVE,
             search_count: 0,
         }
     }
@@ -54,12 +56,17 @@ impl ChessGame {
         force_stopped: Arc<AtomicBool>,
     ) -> ChessMove {
         self.search_count += 1;
-        self.search_engine.search_best_move(
+
+        let (best_move, expected_responding_move) = self.search_engine.search_best_move(
             &mut self.chess_position,
             Duration::from_millis(allowed_time_ms),
             force_stopped,
             true,
-        )
+        );
+
+        self.expected_responding_move = expected_responding_move;
+
+        best_move
     }
 
     pub fn get_position(&self) -> &ChessPosition {
@@ -70,7 +77,9 @@ impl ChessGame {
         format!("{}", self.chess_position.to_fen())
     }
 
-    pub fn get_search_count(&self) -> usize {
-        self.search_count
+    pub fn require_extra_search_time(&self) -> bool {
+        self.search_count == 0
+            || (!self.expected_responding_move.is_empty()
+                && *self.chess_position.get_last_move() != self.expected_responding_move)
     }
 }

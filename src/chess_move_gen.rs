@@ -6,13 +6,13 @@ use crate::chess_position::ChessPosition;
 use crate::def::{
     B1, B8, BB, BK, BLACK, BN, BP, BQ, BR, C1, C8, CASTLING_FLAG_BLACK_KING_SIDE,
     CASTLING_FLAG_BLACK_QUEEN_SIDE, CASTLING_FLAG_WHITE_KING_SIDE, CASTLING_FLAG_WHITE_QUEEN_SIDE,
-    D1, D8, E1, E8, F1, F8, G1, G8, NO_PIECE, NO_SQUARE, RANK_2, RANK_7, UP_DELTA, WB, WHITE, WK,
-    WN, WP, WQ, WR,
+    D1, D8, E1, E8, F1, F8, G1, G8, NO_PIECE, NO_SQUARE, RANK_1, RANK_2, RANK_7, RANK_8, UP_DELTA,
+    WB, WHITE, WK, WN, WP, WQ, WR,
 };
-use crate::process_occupied_indices;
 use crate::types::ChessMoveType::{Castle, CreateEnPassant, EnPassant, Promotion, Regular};
-use crate::types::{ChessMove, ChessSquare, Player};
+use crate::types::{ChessMove, ChessSquare, Player, EMPTY_CHESS_MOVE};
 use crate::util::get_rank;
+use crate::{process_occupied_indices, process_occupied_indices_breakable};
 
 macro_rules! generate_white_promotions {
     ($from_square:expr, $to_square:expr, $chess_moves:expr) => {
@@ -103,6 +103,75 @@ macro_rules! generate_black_promotions_from_move_mask {
     ($from_square:expr, $move_mask:expr, $chess_moves:expr) => {
         process_occupied_indices!($move_mask, |next_to_square| {
             generate_black_promotions!($from_square, next_to_square, $chess_moves);
+        })
+    };
+}
+
+macro_rules! find_first_legal_attacker_from_move_mask {
+    ($chess_position:expr, $attack_square:expr, $move_mask:expr) => {
+        process_occupied_indices_breakable!($move_mask, |next_from_square| {
+            let chess_move = ChessMove {
+                from_square: next_from_square,
+                to_square: $attack_square,
+                promotion_piece: NO_PIECE,
+                move_type: Regular,
+            };
+
+            let saved_state = $chess_position.make_move(&chess_move);
+            let is_legal = !is_in_check($chess_position, $chess_position.player ^ BLACK);
+            $chess_position.unmake_move(&chess_move, saved_state);
+
+            if is_legal {
+                Some(chess_move)
+            } else {
+                None
+            }
+        })
+    };
+}
+
+macro_rules! find_first_legal_white_promotion_from_move_mask {
+    ($chess_position: expr, $attack_square:expr, $move_mask:expr) => {
+        process_occupied_indices_breakable!($move_mask, |next_from_square| {
+            let chess_move = ChessMove {
+                from_square: next_from_square,
+                to_square: $attack_square,
+                promotion_piece: WQ,
+                move_type: Promotion,
+            };
+
+            let saved_state = $chess_position.make_move(&chess_move);
+            let is_legal = !is_in_check($chess_position, $chess_position.player ^ BLACK);
+            $chess_position.unmake_move(&chess_move, saved_state);
+
+            if is_legal {
+                Some(chess_move)
+            } else {
+                None
+            }
+        })
+    };
+}
+
+macro_rules! find_first_legal_black_promotion_from_move_mask {
+    ($chess_position: expr, $attack_square:expr, $move_mask:expr) => {
+        process_occupied_indices_breakable!($move_mask, |next_from_square| {
+            let chess_move = ChessMove {
+                from_square: next_from_square,
+                to_square: $attack_square,
+                promotion_piece: BQ,
+                move_type: Promotion,
+            };
+
+            let saved_state = $chess_position.make_move(&chess_move);
+            let is_legal = !is_in_check($chess_position, $chess_position.player ^ BLACK);
+            $chess_position.unmake_move(&chess_move, saved_state);
+
+            if is_legal {
+                Some(chess_move)
+            } else {
+                None
+            }
         })
     };
 }
@@ -575,4 +644,177 @@ fn is_square_under_attack(
     }
 
     false
+}
+
+pub fn get_least_valued_attacker_to_chess_square(
+    chess_position: &mut ChessPosition,
+    chess_square: ChessSquare,
+) -> ChessMove {
+    let occupy_mask = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
+
+    if chess_position.player == WHITE {
+        let pawn_attack_mask =
+            BLACK_PAWN_ATTACK_MASKS[chess_square] & chess_position.bitboards[WP as usize];
+        if pawn_attack_mask != 0 {
+            if get_rank(chess_square) == RANK_8 {
+                if let Some(chess_move) = find_first_legal_white_promotion_from_move_mask!(
+                    chess_position,
+                    chess_square,
+                    pawn_attack_mask
+                ) {
+                    return chess_move;
+                }
+            } else {
+                if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                    chess_position,
+                    chess_square,
+                    pawn_attack_mask
+                ) {
+                    return chess_move;
+                }
+            }
+        }
+
+        let knight_attack_mask =
+            KNIGHT_MOVE_MASKS[chess_square] & chess_position.bitboards[WN as usize];
+        if knight_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                knight_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let diagonal_attack_mask = get_bishop_attack_mask(occupy_mask, chess_square);
+        let bishop_attack_mask = diagonal_attack_mask & chess_position.bitboards[WB as usize];
+        if bishop_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                bishop_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let file_rank_attack_mask = get_rook_attack_mask(occupy_mask, chess_square);
+        let rook_attack_mask = file_rank_attack_mask & chess_position.bitboards[WR as usize];
+        if rook_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                rook_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let queen_attack_mask =
+            (diagonal_attack_mask | file_rank_attack_mask) & chess_position.bitboards[WQ as usize];
+        if queen_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                queen_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let king_attack_mask =
+            KING_MOVE_MASKS[chess_square] & SQUARE_MASKS[chess_position.white_king_square];
+        if king_attack_mask != 0 {
+            return ChessMove {
+                from_square: chess_position.white_king_square,
+                to_square: chess_square,
+                promotion_piece: NO_PIECE,
+                move_type: Regular,
+            };
+        }
+    } else {
+        let pawn_attack_mask =
+            WHITE_PAWN_ATTACK_MASKS[chess_square] & chess_position.bitboards[BP as usize];
+        if pawn_attack_mask != 0 {
+            if get_rank(chess_square) == RANK_1 {
+                if let Some(chess_move) = find_first_legal_black_promotion_from_move_mask!(
+                    chess_position,
+                    chess_square,
+                    pawn_attack_mask
+                ) {
+                    return chess_move;
+                }
+            } else {
+                if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                    chess_position,
+                    chess_square,
+                    pawn_attack_mask
+                ) {
+                    return chess_move;
+                }
+            }
+        }
+
+        let knight_attack_mask =
+            KNIGHT_MOVE_MASKS[chess_square] & chess_position.bitboards[BN as usize];
+        if knight_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                knight_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let diagonal_attack_mask = get_bishop_attack_mask(occupy_mask, chess_square);
+        let bishop_attack_mask = diagonal_attack_mask & chess_position.bitboards[BB as usize];
+        if bishop_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                bishop_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let file_rank_attack_mask = get_rook_attack_mask(occupy_mask, chess_square);
+        let rook_attack_mask = file_rank_attack_mask & chess_position.bitboards[BR as usize];
+        if rook_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                rook_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let queen_attack_mask =
+            (diagonal_attack_mask | file_rank_attack_mask) & chess_position.bitboards[BQ as usize];
+        if queen_attack_mask != 0 {
+            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
+                chess_position,
+                chess_square,
+                queen_attack_mask
+            ) {
+                return chess_move;
+            }
+        }
+
+        let king_attack_mask =
+            KING_MOVE_MASKS[chess_square] & SQUARE_MASKS[chess_position.black_king_square];
+        if king_attack_mask != 0 {
+            return ChessMove {
+                from_square: chess_position.black_king_square,
+                to_square: chess_square,
+                promotion_piece: NO_PIECE,
+                move_type: Regular,
+            };
+        }
+    }
+
+    EMPTY_CHESS_MOVE
 }

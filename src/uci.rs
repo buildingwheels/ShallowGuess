@@ -72,7 +72,7 @@ pub fn process_command(
 
 fn print_engine_info() {
     println!(
-        "id name {} {}_{}",
+        "id name {} {} ({})",
         ENGINE_NAME, ENGINE_VERSION, HIDDEN_LAYER_SIZE
     );
     println!("id author {}", AUTHOR);
@@ -100,7 +100,7 @@ pub fn print_info(search_info: SearchInfo, principal_variation: &[ChessMove]) {
         if score > 0 {
             format!("mate {}", mate_distance)
         } else {
-            format!("mate -{}", -mate_distance)
+            format!("mate {}", -mate_distance)
         }
     } else {
         format!("cp {}", score)
@@ -267,12 +267,12 @@ fn process_go_command(
     thread::spawn(move || {
         let mut chess_game = chess_game.lock().unwrap();
 
-        let is_first_move = chess_game.get_search_count() == 0;
+        let require_extra_search_time = chess_game.require_extra_search_time();
 
         let allowed_time_ms = if chess_game.get_position().player == WHITE {
-            calculate_optimal_time_for_next_move(&white_time, is_first_move)
+            calculate_optimal_time_for_next_move(&white_time, require_extra_search_time)
         } else {
-            calculate_optimal_time_for_next_move(&black_time, is_first_move)
+            calculate_optimal_time_for_next_move(&black_time, require_extra_search_time)
         };
 
         let best_move = chess_game.search_best_move(allowed_time_ms, force_stopped);
