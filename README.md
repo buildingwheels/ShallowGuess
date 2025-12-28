@@ -21,7 +21,6 @@ A strong UCI-compatible chess engine powered by a neural network **trained solel
 - **Follow-up Move Heuristic**
 - **Late Move Reductions**
 - **Null Move Pruning**
-- **History Pruning**
 - **Zobrist Hashing**
 - **Two-tier Transposition Table**
 

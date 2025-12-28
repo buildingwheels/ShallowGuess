@@ -19,32 +19,22 @@ SECONDS_PER_HOUR = 3600
 
 
 class MmapFileDataset(Dataset):
-    _offset_cache = {}
-
     def __init__(self, file_path):
         self.file_path = file_path
         self.offsets = []
         self.length = 0
 
-        if file_path in MmapFileDataset._offset_cache:
-            self.offsets = MmapFileDataset._offset_cache[file_path]
-            self.length = len(self.offsets)
-            print(
-                f"Using cached offsets for: {file_path} ({(self.length / MILLION_BASE):.2f}M samples)"
-            )
-        else:
-            print(f"Indexing file: {file_path}...")
-            with open(file_path, "rb") as f:
+        print(f"Indexing file: {file_path}...")
+        with open(file_path, "rb") as f:
+            self.offsets.append(f.tell())
+            while f.readline():
                 self.offsets.append(f.tell())
-                while f.readline():
-                    self.offsets.append(f.tell())
 
-            self.offsets.pop()
-            self.length = len(self.offsets)
-            MmapFileDataset._offset_cache[file_path] = self.offsets
-            print(
-                f"Indexing complete. Found {(self.length / MILLION_BASE):.2f}M samples."
-            )
+        self.offsets.pop()
+        self.length = len(self.offsets)
+        print(
+            f"Indexing complete. Found {(self.length / MILLION_BASE):.2f}M samples."
+        )
 
         self.f = open(file_path, "rb")
         self.mmap_obj = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
@@ -172,10 +162,7 @@ class MmapFileDataset(Dataset):
             self.f.close()
             delattr(self, "f")
 
-    @classmethod
-    def clear_cache(cls):
-        cls._offset_cache.clear()
-        print("Offset cache cleared.")
+
 
 
 
@@ -306,7 +293,7 @@ if __name__ == "__main__":
 
     standard_criterion = nn.CrossEntropyLoss()
 
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
+    optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=1
     )
@@ -409,10 +396,7 @@ if __name__ == "__main__":
                     batch_count += 1
 
                     if batch_idx > 1 and batch_idx % args.print_cycle == 0:
-                        grad_info = ""
-                        if args.enable_diagnostics:
-                            grad_norm, _ = check_gradient_norm(model)
-                            grad_info = f"Grad Norm: {grad_norm:.6f}, "
+                        grad_norm, _ = check_gradient_norm(model)
 
                         print(
                             f"{bold('Epoch')} {epoch}/{args.max_epochs} "
@@ -421,6 +405,7 @@ if __name__ == "__main__":
                             f"{bold('Samples')}: {(total_samples_trained / MILLION_BASE):.2f}M "
                             f"{bold('Loss')}: {batch_loss:.4f} "
                             f"{bold('Avg Weighted Loss')}: {(epoch_weighted_loss / max(batch_count, 1)):.4f} "
+                            f"{bold('Grad Norm')}: {grad_norm:.4f} "
                             f"{bold('Batch Time')}: {batch_time:.3f}s "
                             f"{bold('Samples/sec')}: {samples_per_second:.0f} "
                             f"{bold('LR')}: {optimizer.param_groups[0]['lr']:.6f}"

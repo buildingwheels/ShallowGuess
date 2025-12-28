@@ -58,7 +58,6 @@ const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 6;
 const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
 
 const HISTORY_DECAY_THRESHOLD: Score = 1024 * 1024;
-const HISTORY_PRUNING_MAX_DEPTH: SearchDepth = 6;
 
 const MAX_DEPTH: SearchDepth = 128;
 const MAX_PV_LENGTH: usize = 128;
@@ -564,12 +563,6 @@ impl SearchEngine {
 
         let mut searched_quiet_chess_moves = Vec::with_capacity(quiet_chess_moves.len());
 
-        let allow_history_pruning = !on_pv
-            && !in_check
-            && !is_pawn_endgame
-            && !under_mate_threat
-            && depth <= HISTORY_PRUNING_MAX_DEPTH;
-
         while let Some(sortable_chess_move) = quiet_chess_moves.pop() {
             let chess_move = sortable_chess_move.chess_move;
 
@@ -587,16 +580,6 @@ impl SearchEngine {
             valid_move_count += 1;
 
             let gives_check = is_in_check(chess_position);
-
-            if valid_move_count > 1
-                && !gives_check
-                && allow_history_pruning
-                && sortable_chess_move.priority == SORT_PRIORITY_OTHER
-                && sortable_chess_move.sort_score < calculate_history_pruning_threshold(depth)
-            {
-                chess_position.unmake_move(&chess_move, saved_state);
-                continue;
-            }
 
             let mut score;
 
@@ -946,7 +929,7 @@ impl SearchEngine {
         for chess_move in chess_moves {
             let mvv_lva_score = get_mvv_lva_score(&chess_move, chess_position);
 
-            if mvv_lva_score >= 0 {
+            if mvv_lva_score > 0 {
                 sorted_moves.push(SortableChessMove {
                     chess_move,
                     sort_score: mvv_lva_score,
@@ -1489,9 +1472,4 @@ fn is_quiet_chess_move<N: Network>(
 #[inline(always)]
 fn calculate_history_score_change(depth: SearchDepth) -> Score {
     (depth as Score) * (depth as Score)
-}
-
-#[inline(always)]
-fn calculate_history_pruning_threshold(depth: SearchDepth) -> Score {
-    -((depth as Score) * (depth as Score)) << 3
 }
