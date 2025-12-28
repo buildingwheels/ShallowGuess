@@ -1,0 +1,89 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
+use shallow_guess::util::read_lines;
+use std::env;
+use std::fs::File;
+use std::io::{LineWriter, Write};
+
+fn main() {
+    let mut args = env::args().into_iter();
+    args.next().unwrap();
+
+    let original_fen_file = args.next().unwrap();
+    let output_file = args.next().unwrap();
+    let max_count = args.next().unwrap().parse::<u128>().unwrap();
+    let skip_terminated_game = args.next().unwrap().parse::<bool>().unwrap();
+
+    filter_fen_data(
+        &original_fen_file,
+        &output_file,
+        max_count,
+        skip_terminated_game,
+    );
+}
+
+fn filter_fen_data(
+    fen_file: &str,
+    output_file_path: &str,
+    max_positions_per_game: u128,
+    skip_terminated_game: bool,
+) {
+    let output_file = File::create(output_file_path).unwrap();
+    let mut file_writer = LineWriter::new(output_file);
+    let mut current_game_result = 0.;
+    let mut position_count: u128 = 0;
+    let mut skip_current_game = false;
+    let mut skipped_count = 0;
+
+    if let Ok(lines) = read_lines(fen_file) {
+        for line in lines.flatten() {
+            let line = line.trim();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if skip_terminated_game && line.contains("Termination") {
+                skip_current_game = true;
+            } else if line.contains("Result") {
+                if line.contains("1/2") {
+                    current_game_result = 0.5;
+                } else if line.contains("0-1") {
+                    current_game_result = 0.;
+                } else if line.contains("1-0") {
+                    current_game_result = 1.;
+                }
+
+                position_count = 0;
+                skip_current_game = false;
+            } else if !line.contains("[") {
+                if skip_current_game {
+                    skipped_count += 1;
+                    continue;
+                }
+
+                position_count += 1;
+
+                if position_count > 1 && position_count < max_positions_per_game {
+                    file_writer
+                        .write(
+                            format!(
+                                "{},{},{}\n",
+                                line.trim(),
+                                current_game_result,
+                                position_count
+                            )
+                            .as_bytes(),
+                        )
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    println!(
+        "Completed filtering FEN data with size {} (skipped {}) to: {}",
+        position_count, skipped_count, output_file_path
+    );
+}

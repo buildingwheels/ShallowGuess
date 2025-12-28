@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::def::{CHESS_FILE_COUNT, CHESS_RANK_COUNT, CHESS_SQUARE_COUNT, FILE_A, FILE_H};
 use crate::types::{BitBoard, ChessSquare};
 use crate::util::{get_highest_occupied_chess_square, get_lowest_occupied_chess_square};
@@ -907,6 +910,7 @@ pub const fn get_black_pawn_attack_mask(pawn_mask: BitBoard) -> BitBoard {
     (pawn_mask >> 7) & !FILE_MASKS[FILE_A] | (pawn_mask >> 9) & !FILE_MASKS[FILE_H]
 }
 
+#[inline(always)]
 pub const fn get_bishop_attack_mask(occupy_mask: BitBoard, from_square: ChessSquare) -> BitBoard {
     let mut up_left_attack_mask = UP_LEFT_RAY_MASKS[from_square];
 
@@ -939,6 +943,7 @@ pub const fn get_bishop_attack_mask(occupy_mask: BitBoard, from_square: ChessSqu
     up_left_attack_mask | up_right_attack_mask | down_left_attack_mask | down_right_attack_mask
 }
 
+#[inline(always)]
 pub const fn get_rook_attack_mask(occupy_mask: BitBoard, from_square: ChessSquare) -> BitBoard {
     let mut up_attack_mask = UP_RAY_MASKS[from_square];
 

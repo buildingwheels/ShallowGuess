@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::bit_masks::{
     get_bishop_attack_mask, get_rook_attack_mask, BLACK_PAWN_ATTACK_MASKS, EMPTY_MASK,
     KING_MOVE_MASKS, KNIGHT_MOVE_MASKS, SQUARE_MASKS, WHITE_PAWN_ATTACK_MASKS,
@@ -6,13 +9,14 @@ use crate::chess_position::ChessPosition;
 use crate::def::{
     B1, B8, BB, BK, BLACK, BN, BP, BQ, BR, C1, C8, CASTLING_FLAG_BLACK_KING_SIDE,
     CASTLING_FLAG_BLACK_QUEEN_SIDE, CASTLING_FLAG_WHITE_KING_SIDE, CASTLING_FLAG_WHITE_QUEEN_SIDE,
-    D1, D8, E1, E8, F1, F8, G1, G8, NO_PIECE, NO_SQUARE, RANK_1, RANK_2, RANK_7, RANK_8, UP_DELTA,
-    WB, WHITE, WK, WN, WP, WQ, WR,
+    D1, D8, E1, E8, F1, F8, G1, G8, NO_PIECE, NO_SQUARE, PIECE_TYPE_COUNT, PIECE_VALS, RANK_2,
+    RANK_7, UP_DELTA, WB, WHITE, WK, WN, WP, WQ, WR,
 };
+use crate::network::Network;
+use crate::process_occupied_indices;
 use crate::types::ChessMoveType::{Castle, CreateEnPassant, EnPassant, Promotion, Regular};
-use crate::types::{ChessMove, ChessSquare, Player, EMPTY_CHESS_MOVE};
+use crate::types::{BitBoard, ChessMove, ChessPiece, ChessSquare, Player, Score};
 use crate::util::get_rank;
-use crate::{process_occupied_indices, process_occupied_indices_breakable};
 
 macro_rules! generate_white_promotions {
     ($from_square:expr, $to_square:expr, $chess_moves:expr) => {
@@ -107,77 +111,12 @@ macro_rules! generate_black_promotions_from_move_mask {
     };
 }
 
-macro_rules! find_first_legal_attacker_from_move_mask {
-    ($chess_position:expr, $attack_square:expr, $move_mask:expr) => {
-        process_occupied_indices_breakable!($move_mask, |next_from_square| {
-            let chess_move = ChessMove {
-                from_square: next_from_square,
-                to_square: $attack_square,
-                promotion_piece: NO_PIECE,
-                move_type: Regular,
-            };
+const MAX_POSSIBLE_MOVES_COUNT: usize = 256;
 
-            let saved_state = $chess_position.make_move(&chess_move);
-            let is_legal = !is_in_check($chess_position, $chess_position.player ^ BLACK);
-            $chess_position.unmake_move(&chess_move, saved_state);
-
-            if is_legal {
-                Some(chess_move)
-            } else {
-                None
-            }
-        })
-    };
-}
-
-macro_rules! find_first_legal_white_promotion_from_move_mask {
-    ($chess_position: expr, $attack_square:expr, $move_mask:expr) => {
-        process_occupied_indices_breakable!($move_mask, |next_from_square| {
-            let chess_move = ChessMove {
-                from_square: next_from_square,
-                to_square: $attack_square,
-                promotion_piece: WQ,
-                move_type: Promotion,
-            };
-
-            let saved_state = $chess_position.make_move(&chess_move);
-            let is_legal = !is_in_check($chess_position, $chess_position.player ^ BLACK);
-            $chess_position.unmake_move(&chess_move, saved_state);
-
-            if is_legal {
-                Some(chess_move)
-            } else {
-                None
-            }
-        })
-    };
-}
-
-macro_rules! find_first_legal_black_promotion_from_move_mask {
-    ($chess_position: expr, $attack_square:expr, $move_mask:expr) => {
-        process_occupied_indices_breakable!($move_mask, |next_from_square| {
-            let chess_move = ChessMove {
-                from_square: next_from_square,
-                to_square: $attack_square,
-                promotion_piece: BQ,
-                move_type: Promotion,
-            };
-
-            let saved_state = $chess_position.make_move(&chess_move);
-            let is_legal = !is_in_check($chess_position, $chess_position.player ^ BLACK);
-            $chess_position.unmake_move(&chess_move, saved_state);
-
-            if is_legal {
-                Some(chess_move)
-            } else {
-                None
-            }
-        })
-    };
-}
-
-pub fn generate_captures_and_promotions(chess_position: &ChessPosition) -> Vec<ChessMove> {
-    let mut chess_moves = Vec::new();
+pub fn generate_captures_and_promotions<N: Network>(
+    chess_position: &ChessPosition<N>,
+) -> Vec<ChessMove> {
+    let mut chess_moves = Vec::with_capacity(MAX_POSSIBLE_MOVES_COUNT);
 
     let white_mask = chess_position.white_all_bitboard;
     let black_mask = chess_position.black_all_bitboard;
@@ -356,8 +295,11 @@ pub fn generate_captures_and_promotions(chess_position: &ChessPosition) -> Vec<C
     chess_moves
 }
 
-pub fn generate_quiet_moves(chess_position: &ChessPosition, in_check: bool) -> Vec<ChessMove> {
-    let mut chess_moves = Vec::new();
+pub fn generate_quiet_moves<N: Network>(
+    chess_position: &ChessPosition<N>,
+    in_check: bool,
+) -> Vec<ChessMove> {
+    let mut chess_moves = Vec::with_capacity(MAX_POSSIBLE_MOVES_COUNT);
 
     let white_mask = chess_position.white_all_bitboard;
     let black_mask = chess_position.black_all_bitboard;
@@ -569,11 +511,19 @@ pub fn generate_quiet_moves(chess_position: &ChessPosition, in_check: bool) -> V
     chess_moves
 }
 
-pub fn is_invalid_position(chess_position: &ChessPosition) -> bool {
-    is_in_check(chess_position, chess_position.player ^ BLACK)
+pub fn is_invalid_position<N: Network>(chess_position: &ChessPosition<N>) -> bool {
+    is_player_in_check(chess_position, chess_position.player ^ BLACK)
 }
 
-pub fn is_in_check(chess_position: &ChessPosition, player: Player) -> bool {
+pub fn is_in_check<N: Network>(chess_position: &ChessPosition<N>) -> bool {
+    if chess_position.player == WHITE {
+        is_square_under_attack(chess_position.white_king_square, BLACK, chess_position)
+    } else {
+        is_square_under_attack(chess_position.black_king_square, WHITE, chess_position)
+    }
+}
+
+pub fn is_player_in_check<N: Network>(chess_position: &ChessPosition<N>, player: Player) -> bool {
     if player == WHITE {
         is_square_under_attack(chess_position.white_king_square, BLACK, chess_position)
     } else {
@@ -581,10 +531,350 @@ pub fn is_in_check(chess_position: &ChessPosition, player: Player) -> bool {
     }
 }
 
-fn is_square_under_attack(
+pub fn static_exchange_evaluation<N: Network>(
+    to_square: ChessSquare,
+    chess_position: &mut ChessPosition<N>,
+) -> Score {
+    let bitboards = &mut chess_position.bitboards;
+    let occupy_mask = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
+
+    let mut attackers_white =
+        get_all_attackers_for_player(to_square, WHITE, bitboards, occupy_mask);
+    attackers_white.sort_by(|&(first_chess_piece, _), &(second_chess_piece, _)| {
+        PIECE_VALS[first_chess_piece as usize].cmp(&PIECE_VALS[second_chess_piece as usize])
+    });
+
+    let mut attackers_black =
+        get_all_attackers_for_player(to_square, BLACK, bitboards, occupy_mask);
+    attackers_black.sort_by(|&(first_chess_piece, _), &(second_chess_piece, _)| {
+        PIECE_VALS[first_chess_piece as usize].cmp(&PIECE_VALS[second_chess_piece as usize])
+    });
+
+    let mut known_attackers_mask = EMPTY_MASK;
+
+    for &(_, attacker_square) in &attackers_white {
+        known_attackers_mask |= SQUARE_MASKS[attacker_square];
+    }
+
+    for &(_, attacker_square) in &attackers_black {
+        known_attackers_mask |= SQUARE_MASKS[attacker_square];
+    }
+
+    static_exchange_evaluation_recursive(
+        to_square,
+        chess_position.player,
+        chess_position.board[to_square],
+        &mut attackers_white,
+        &mut attackers_black,
+        known_attackers_mask,
+        bitboards,
+        occupy_mask,
+    )
+    .max(0)
+}
+
+fn static_exchange_evaluation_recursive(
+    to_square: ChessSquare,
+    current_player: Player,
+    previous_attacker: ChessPiece,
+    attackers_white: &mut Vec<(ChessPiece, ChessSquare)>,
+    attackers_black: &mut Vec<(ChessPiece, ChessSquare)>,
+    mut known_attackers_mask: BitBoard,
+    bitboards: &mut [BitBoard; PIECE_TYPE_COUNT],
+    occupy_mask: BitBoard,
+) -> Score {
+    let (next_attacker, next_attacker_square) = if current_player == WHITE {
+        if attackers_white.is_empty() {
+            return 0;
+        }
+
+        attackers_white.remove(0)
+    } else {
+        if attackers_black.is_empty() {
+            return 0;
+        }
+
+        attackers_black.remove(0)
+    };
+
+    let next_attacker_square_mask = SQUARE_MASKS[next_attacker_square];
+
+    bitboards[next_attacker as usize] &= !next_attacker_square_mask;
+
+    let updated_occupy_mask = occupy_mask & !next_attacker_square_mask;
+
+    let new_attackers_white = get_ray_attackers_for_player(
+        to_square,
+        WHITE,
+        bitboards,
+        updated_occupy_mask,
+        known_attackers_mask,
+    );
+
+    if !new_attackers_white.is_empty() {
+        for (_, attacker_square) in &new_attackers_white {
+            known_attackers_mask |= SQUARE_MASKS[*attacker_square];
+        }
+
+        attackers_white.extend(new_attackers_white);
+        attackers_white.sort_by(|&(first_chess_piece, _), &(second_chess_piece, _)| {
+            PIECE_VALS[first_chess_piece as usize].cmp(&PIECE_VALS[second_chess_piece as usize])
+        });
+    }
+
+    let new_attackers_black = get_ray_attackers_for_player(
+        to_square,
+        BLACK,
+        bitboards,
+        updated_occupy_mask,
+        known_attackers_mask,
+    );
+
+    if !new_attackers_black.is_empty() {
+        for (_, attacker_square) in &new_attackers_black {
+            known_attackers_mask |= SQUARE_MASKS[*attacker_square];
+        }
+
+        attackers_black.extend(new_attackers_black);
+        attackers_black.sort_by(|&(first_chess_piece, _), &(second_chess_piece, _)| {
+            PIECE_VALS[first_chess_piece as usize].cmp(&PIECE_VALS[second_chess_piece as usize])
+        });
+    }
+
+    let score = PIECE_VALS[previous_attacker as usize]
+        - static_exchange_evaluation_recursive(
+            to_square,
+            current_player ^ BLACK,
+            next_attacker,
+            attackers_white,
+            attackers_black,
+            known_attackers_mask,
+            bitboards,
+            updated_occupy_mask,
+        );
+
+    bitboards[next_attacker as usize] |= next_attacker_square_mask;
+
+    score.max(0)
+}
+
+fn get_all_attackers_for_player(
     chess_square: ChessSquare,
     attack_player: Player,
-    chess_position: &ChessPosition,
+    bitboards: &[BitBoard; PIECE_TYPE_COUNT],
+    occupy_mask: BitBoard,
+) -> Vec<(ChessPiece, ChessSquare)> {
+    let mut attackers = Vec::new();
+
+    if attack_player == BLACK {
+        process_occupied_indices!(
+            WHITE_PAWN_ATTACK_MASKS[chess_square] & bitboards[BP as usize],
+            |attacker_square| {
+                attackers.push((BP, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            KNIGHT_MOVE_MASKS[chess_square] & bitboards[BN as usize],
+            |attacker_square| {
+                attackers.push((BN, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            KING_MOVE_MASKS[chess_square] & bitboards[BK as usize],
+            |attacker_square| {
+                attackers.push((BK, attacker_square));
+            }
+        );
+
+        let bishop_attackers_mask = get_bishop_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[BB as usize],
+            |attacker_square| {
+                attackers.push((BB, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[BQ as usize],
+            |attacker_square| {
+                attackers.push((BQ, attacker_square));
+            }
+        );
+
+        let rook_attackers_mask = get_rook_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[BR as usize],
+            |attacker_square| {
+                attackers.push((BR, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[BQ as usize],
+            |attacker_square| {
+                attackers.push((BQ, attacker_square));
+            }
+        );
+    } else {
+        process_occupied_indices!(
+            BLACK_PAWN_ATTACK_MASKS[chess_square] & bitboards[WP as usize],
+            |attacker_square| {
+                attackers.push((WP, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            KNIGHT_MOVE_MASKS[chess_square] & bitboards[WN as usize],
+            |attacker_square| {
+                attackers.push((WN, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            KING_MOVE_MASKS[chess_square] & bitboards[WK as usize],
+            |attacker_square| {
+                attackers.push((WK, attacker_square));
+            }
+        );
+
+        let bishop_attackers_mask = get_bishop_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[WB as usize],
+            |attacker_square| {
+                attackers.push((WB, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[WQ as usize],
+            |attacker_square| {
+                attackers.push((WQ, attacker_square));
+            }
+        );
+
+        let rook_attackers_mask = get_rook_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[WR as usize],
+            |attacker_square| {
+                attackers.push((WR, attacker_square));
+            }
+        );
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[WQ as usize],
+            |attacker_square| {
+                attackers.push((WQ, attacker_square));
+            }
+        );
+    }
+
+    attackers
+}
+
+fn get_ray_attackers_for_player(
+    chess_square: ChessSquare,
+    attack_player: Player,
+    bitboards: &[BitBoard; PIECE_TYPE_COUNT],
+    occupy_mask: BitBoard,
+    known_attackers_mask: BitBoard,
+) -> Vec<(ChessPiece, ChessSquare)> {
+    let mut attackers = Vec::new();
+
+    if attack_player == BLACK {
+        let bishop_attackers_mask = get_bishop_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[BB as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((BB, attacker_square));
+                }
+            }
+        );
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[BQ as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((BQ, attacker_square));
+                }
+            }
+        );
+
+        let rook_attackers_mask = get_rook_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[BR as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((BR, attacker_square));
+                }
+            }
+        );
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[BQ as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((BQ, attacker_square));
+                }
+            }
+        );
+    } else {
+        let bishop_attackers_mask = get_bishop_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[WB as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((WB, attacker_square));
+                }
+            }
+        );
+
+        process_occupied_indices!(
+            bishop_attackers_mask & bitboards[WQ as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((WQ, attacker_square));
+                }
+            }
+        );
+
+        let rook_attackers_mask = get_rook_attack_mask(occupy_mask, chess_square);
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[WR as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((WR, attacker_square));
+                }
+            }
+        );
+
+        process_occupied_indices!(
+            rook_attackers_mask & bitboards[WQ as usize],
+            |attacker_square| {
+                if known_attackers_mask & SQUARE_MASKS[attacker_square] == 0 {
+                    attackers.push((WQ, attacker_square));
+                }
+            }
+        );
+    }
+
+    attackers
+}
+
+fn is_square_under_attack<N: Network>(
+    chess_square: ChessSquare,
+    attack_player: Player,
+    chess_position: &ChessPosition<N>,
 ) -> bool {
     let bitboards = &chess_position.bitboards;
     let occupy_mask = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
@@ -644,177 +934,4 @@ fn is_square_under_attack(
     }
 
     false
-}
-
-pub fn get_least_valued_attacker_to_chess_square(
-    chess_position: &mut ChessPosition,
-    chess_square: ChessSquare,
-) -> ChessMove {
-    let occupy_mask = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
-
-    if chess_position.player == WHITE {
-        let pawn_attack_mask =
-            BLACK_PAWN_ATTACK_MASKS[chess_square] & chess_position.bitboards[WP as usize];
-        if pawn_attack_mask != 0 {
-            if get_rank(chess_square) == RANK_8 {
-                if let Some(chess_move) = find_first_legal_white_promotion_from_move_mask!(
-                    chess_position,
-                    chess_square,
-                    pawn_attack_mask
-                ) {
-                    return chess_move;
-                }
-            } else {
-                if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                    chess_position,
-                    chess_square,
-                    pawn_attack_mask
-                ) {
-                    return chess_move;
-                }
-            }
-        }
-
-        let knight_attack_mask =
-            KNIGHT_MOVE_MASKS[chess_square] & chess_position.bitboards[WN as usize];
-        if knight_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                knight_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let diagonal_attack_mask = get_bishop_attack_mask(occupy_mask, chess_square);
-        let bishop_attack_mask = diagonal_attack_mask & chess_position.bitboards[WB as usize];
-        if bishop_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                bishop_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let file_rank_attack_mask = get_rook_attack_mask(occupy_mask, chess_square);
-        let rook_attack_mask = file_rank_attack_mask & chess_position.bitboards[WR as usize];
-        if rook_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                rook_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let queen_attack_mask =
-            (diagonal_attack_mask | file_rank_attack_mask) & chess_position.bitboards[WQ as usize];
-        if queen_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                queen_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let king_attack_mask =
-            KING_MOVE_MASKS[chess_square] & SQUARE_MASKS[chess_position.white_king_square];
-        if king_attack_mask != 0 {
-            return ChessMove {
-                from_square: chess_position.white_king_square,
-                to_square: chess_square,
-                promotion_piece: NO_PIECE,
-                move_type: Regular,
-            };
-        }
-    } else {
-        let pawn_attack_mask =
-            WHITE_PAWN_ATTACK_MASKS[chess_square] & chess_position.bitboards[BP as usize];
-        if pawn_attack_mask != 0 {
-            if get_rank(chess_square) == RANK_1 {
-                if let Some(chess_move) = find_first_legal_black_promotion_from_move_mask!(
-                    chess_position,
-                    chess_square,
-                    pawn_attack_mask
-                ) {
-                    return chess_move;
-                }
-            } else {
-                if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                    chess_position,
-                    chess_square,
-                    pawn_attack_mask
-                ) {
-                    return chess_move;
-                }
-            }
-        }
-
-        let knight_attack_mask =
-            KNIGHT_MOVE_MASKS[chess_square] & chess_position.bitboards[BN as usize];
-        if knight_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                knight_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let diagonal_attack_mask = get_bishop_attack_mask(occupy_mask, chess_square);
-        let bishop_attack_mask = diagonal_attack_mask & chess_position.bitboards[BB as usize];
-        if bishop_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                bishop_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let file_rank_attack_mask = get_rook_attack_mask(occupy_mask, chess_square);
-        let rook_attack_mask = file_rank_attack_mask & chess_position.bitboards[BR as usize];
-        if rook_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                rook_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let queen_attack_mask =
-            (diagonal_attack_mask | file_rank_attack_mask) & chess_position.bitboards[BQ as usize];
-        if queen_attack_mask != 0 {
-            if let Some(chess_move) = find_first_legal_attacker_from_move_mask!(
-                chess_position,
-                chess_square,
-                queen_attack_mask
-            ) {
-                return chess_move;
-            }
-        }
-
-        let king_attack_mask =
-            KING_MOVE_MASKS[chess_square] & SQUARE_MASKS[chess_position.black_king_square];
-        if king_attack_mask != 0 {
-            return ChessMove {
-                from_square: chess_position.black_king_square,
-                to_square: chess_square,
-                promotion_piece: NO_PIECE,
-                move_type: Regular,
-            };
-        }
-    }
-
-    EMPTY_CHESS_MOVE
 }

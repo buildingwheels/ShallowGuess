@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::def::{
     BB, BK, BN, BP, BQ, BR, CHESS_FILE_COUNT, NO_PIECE, WB, WHITE, WK, WN, WP, WQ, WR,
 };

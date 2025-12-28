@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::chess_game::ChessGame;
 use crate::chess_position::ChessPosition;
 use crate::def::{
@@ -14,11 +17,14 @@ use crate::search_engine::SearchInfo;
 use crate::time::{calculate_optimal_time_for_next_move, TimeInfo};
 use crate::transpos::{DEFAULT_HASH_SIZE_MB, MAX_HASH_SIZE_MB, MIN_HASH_SIZE_MB};
 use crate::types::{ChessMove, ChessMoveCount, ChessMoveType, MilliSeconds, SearchDepth};
+use crate::util::is_power_of_two;
 
+use crate::network::Network;
 use std::str::SplitWhitespace;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::vec::Vec;
 
 const UCI_CMD_UCI: &str = "uci";
 const UCI_CMD_IS_READY: &str = "isready";
@@ -44,9 +50,9 @@ const UCI_CMD_WHITE_TIME_INCREMENT: &str = "winc";
 const UCI_CMD_BLACK_TIME_INCREMENT: &str = "binc";
 const UCI_CMD_MOVES_TO_GO: &str = "movestogo";
 
-pub fn process_command(
+pub fn process_command<N: Network + 'static>(
     command: &str,
-    chess_game: Arc<Mutex<ChessGame>>,
+    chess_game: Arc<Mutex<ChessGame<N>>>,
     force_stopped: Arc<AtomicBool>,
 ) {
     let mut subcommands = command.trim().split_whitespace();
@@ -70,10 +76,43 @@ pub fn process_command(
     }
 }
 
+fn get_target_info() -> String {
+    let mut features = Vec::new();
+
+    #[cfg(target_feature = "avx512f")]
+    features.push("AVX512");
+    #[cfg(target_feature = "avx2")]
+    features.push("AVX2");
+    #[cfg(target_feature = "avx")]
+    features.push("AVX");
+    #[cfg(target_feature = "sse4.2")]
+    features.push("SSE4.2");
+    #[cfg(target_feature = "sse4.1")]
+    features.push("SSE4.1");
+    #[cfg(target_feature = "ssse3")]
+    features.push("SSSE3");
+    #[cfg(target_feature = "sse3")]
+    features.push("SSE3");
+    #[cfg(target_feature = "sse2")]
+    features.push("SSE2");
+    #[cfg(target_feature = "neon")]
+    features.push("NEON");
+
+    if features.is_empty() {
+        "Scalar".to_string()
+    } else {
+        features.join("+")
+    }
+}
+
 fn print_engine_info() {
     println!(
-        "id name {} {} ({})",
-        ENGINE_NAME, ENGINE_VERSION, HIDDEN_LAYER_SIZE
+        "id name {} {} [{}] [{}] [{}]",
+        ENGINE_NAME,
+        ENGINE_VERSION,
+        HIDDEN_LAYER_SIZE,
+        std::env::consts::ARCH,
+        get_target_info()
     );
     println!("id author {}", AUTHOR);
     println!(
@@ -87,6 +126,7 @@ fn print_ready_message() {
     println!("readyok");
 }
 
+#[inline(always)]
 fn print_best_move(chess_move: &ChessMove) {
     println!("bestmove {}", format_chess_move(chess_move));
 }
@@ -113,7 +153,7 @@ pub fn print_info(search_info: SearchInfo, principal_variation: &[ChessMove]) {
         search_info.searched_time_ms,
         search_info.depth,
         search_info.selected_depth,
-        search_info.hash_utilization_permill,
+        search_info.hash_utilization_permil,
     );
 
     for chess_move in principal_variation {
@@ -123,9 +163,9 @@ pub fn print_info(search_info: SearchInfo, principal_variation: &[ChessMove]) {
     println!();
 }
 
-fn process_set_position_and_move_list_command(
+fn process_set_position_and_move_list_command<N: Network + 'static>(
     subcommands: &mut SplitWhitespace,
-    chess_game: Arc<Mutex<ChessGame>>,
+    chess_game: Arc<Mutex<ChessGame<N>>>,
 ) {
     let next_command = subcommands
         .next()
@@ -139,10 +179,14 @@ fn process_set_position_and_move_list_command(
             }
         }
         UCI_CMD_FEN => {
-            let fen_string: String = subcommands
-                .take_while(|&s| s != UCI_CMD_MOVES)
-                .collect::<Vec<_>>()
-                .join(SPLITTER);
+            let mut fen_parts = Vec::new();
+            for part in subcommands.by_ref() {
+                if part == UCI_CMD_MOVES {
+                    break;
+                }
+                fen_parts.push(part);
+            }
+            let fen_string = fen_parts.join(SPLITTER);
 
             chess_game
                 .lock()
@@ -157,19 +201,20 @@ fn process_set_position_and_move_list_command(
     }
 }
 
-fn process_moves(subcommands: &mut SplitWhitespace, chess_game: Arc<Mutex<ChessGame>>) {
+fn process_moves<N: Network + 'static>(
+    subcommands: &mut SplitWhitespace,
+    chess_game: Arc<Mutex<ChessGame<N>>>,
+) {
+    let mut game_lock = chess_game.lock().unwrap();
     while let Some(next_chess_move_str) = subcommands.next() {
-        let next_chess_move = parse_move_str(
-            next_chess_move_str,
-            chess_game.lock().unwrap().get_position(),
-        );
-        chess_game.lock().unwrap().make_move(&next_chess_move);
+        let next_chess_move = parse_move_str(next_chess_move_str, game_lock.get_position());
+        game_lock.make_move(&next_chess_move);
     }
 }
 
-fn process_set_option_command(
+fn process_set_option_command<N: Network + 'static>(
     subcommands: &mut SplitWhitespace,
-    chess_game: Arc<Mutex<ChessGame>>,
+    chess_game: Arc<Mutex<ChessGame<N>>>,
 ) {
     while let Some(next_command) = subcommands.next() {
         match next_command {
@@ -184,7 +229,7 @@ fn process_set_option_command(
             UCI_CMD_OPTION_KEY_VALUE => {
                 if let Some(hash_size_str) = subcommands.next() {
                     if let Ok(hash_size_mb) = hash_size_str.parse::<usize>() {
-                        if hash_size_mb & (hash_size_mb - 1) != 0 {
+                        if !is_power_of_two(hash_size_mb) {
                             println!("Invalid hash size {}, needs to be power of 2", hash_size_mb);
                         } else {
                             chess_game.lock().unwrap().set_hash_size(hash_size_mb);
@@ -199,9 +244,9 @@ fn process_set_option_command(
     }
 }
 
-fn process_go_command(
+fn process_go_command<N: Network + 'static>(
     subcommands: &mut SplitWhitespace,
-    chess_game: Arc<Mutex<ChessGame>>,
+    chess_game: Arc<Mutex<ChessGame<N>>>,
     force_stopped: Arc<AtomicBool>,
 ) {
     let mut white_time = TimeInfo::new();
@@ -262,26 +307,28 @@ fn process_go_command(
     }
 
     let chess_game = Arc::clone(&chess_game);
+    let force_stopped_clone = Arc::clone(&force_stopped);
     force_stopped.store(false, Ordering::Relaxed);
 
     thread::spawn(move || {
-        let mut chess_game = chess_game.lock().unwrap();
-
-        let require_extra_search_time = chess_game.require_extra_search_time();
-
-        let allowed_time_ms = if chess_game.get_position().player == WHITE {
-            calculate_optimal_time_for_next_move(&white_time, require_extra_search_time)
-        } else {
-            calculate_optimal_time_for_next_move(&black_time, require_extra_search_time)
+        let (player, debug_info) = {
+            let game_lock = chess_game.lock().unwrap();
+            (game_lock.get_position().player, game_lock.get_debug_info())
         };
 
-        let best_move = chess_game.search_best_move(allowed_time_ms, force_stopped);
+        let (allowed_time_ms, extra_time_ms) = if player == WHITE {
+            calculate_optimal_time_for_next_move(&white_time)
+        } else {
+            calculate_optimal_time_for_next_move(&black_time)
+        };
+
+        let best_move = {
+            let mut chess_game = chess_game.lock().unwrap();
+            chess_game.search_best_move(allowed_time_ms, extra_time_ms, force_stopped_clone)
+        };
 
         if best_move.is_empty() {
-            println!(
-                "Unable to find chess move for {}",
-                chess_game.get_debug_info()
-            );
+            println!("Unable to find chess move for {}", debug_info);
         } else {
             print_best_move(&best_move);
         }
@@ -308,7 +355,10 @@ fn process_time_command(
     }
 }
 
-fn process_perft_command(subcommands: &mut SplitWhitespace, chess_game: Arc<Mutex<ChessGame>>) {
+fn process_perft_command<N: Network + 'static>(
+    subcommands: &mut SplitWhitespace,
+    chess_game: Arc<Mutex<ChessGame<N>>>,
+) {
     if let Some(depth_str) = subcommands.next() {
         if let Ok(depth) = depth_str.parse::<SearchDepth>() {
             chess_game.lock().unwrap().perft(depth);
@@ -320,7 +370,10 @@ fn process_perft_command(subcommands: &mut SplitWhitespace, chess_game: Arc<Mute
     }
 }
 
-fn parse_move_str(move_str: &str, chess_position: &ChessPosition) -> ChessMove {
+fn parse_move_str<N: Network + 'static>(
+    move_str: &str,
+    chess_position: &ChessPosition<N>,
+) -> ChessMove {
     let mut move_str_iter = move_str.chars();
     let from_file = move_str_iter.next().expect("Invalid move format");
     let from_rank = move_str_iter.next().expect("Invalid move format");

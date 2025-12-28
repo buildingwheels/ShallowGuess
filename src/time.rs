@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::types::{ChessMoveCount, MilliSeconds};
 
 pub struct TimeInfo {
@@ -21,8 +24,7 @@ const INCREMENT_TIME_BUFFER_RATIO: MilliSeconds = 2;
 
 pub fn calculate_optimal_time_for_next_move(
     time_control: &TimeInfo,
-    require_extra_search_time: bool,
-) -> MilliSeconds {
+) -> (MilliSeconds, MilliSeconds) {
     let remaining_move_count = if time_control.remaining_move_count == 0 {
         DEFAULT_REMAINING_MOVE_COUNT
     } else {
@@ -31,11 +33,14 @@ pub fn calculate_optimal_time_for_next_move(
 
     let base_time = time_control.remaining_time_millis / remaining_move_count as MilliSeconds;
 
-    let extra_time = if require_extra_search_time && remaining_move_count > 1 {
+    let extra_time = if remaining_move_count > 1 {
         base_time / 2
     } else {
         0
     };
 
-    base_time + extra_time + time_control.increment_time_millis / INCREMENT_TIME_BUFFER_RATIO
+    (
+        base_time + time_control.increment_time_millis / INCREMENT_TIME_BUFFER_RATIO,
+        extra_time,
+    )
 }

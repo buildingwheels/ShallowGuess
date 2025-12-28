@@ -1,3 +1,6 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::def::{
     A1, A2, A3, A4, A5, A6, A7, A8, B1, B2, B3, B4, B5, B6, B7, B8, BB, BK, BN, BP, BQ, BR, C1, C2,
     C3, C4, C5, C6, C7, C8, CHESS_SQUARE_COUNT, D1, D2, D3, D4, D5, D6, D7, D8, E1, E2, E3, E4, E5,
@@ -6,6 +9,10 @@ use crate::def::{
 };
 use crate::network::NetworkIntValue;
 use crate::types::{BitBoard, ChessFile, ChessPiece, ChessRank, ChessSquare};
+use std::fs::File;
+use std::io;
+use std::io::BufRead;
+use std::path::Path;
 
 pub type NetworkInputs = Vec<NetworkIntValue>;
 
@@ -137,6 +144,11 @@ fn is_bit_set(bitboard: BitBoard, index: usize) -> bool {
     bitboard & 1 << index != 0
 }
 
+#[inline(always)]
+pub fn is_power_of_two(n: usize) -> bool {
+    n != 0 && (n & (n - 1)) == 0
+}
+
 #[macro_export]
 macro_rules! process_occupied_indices {
     ($bitboard:expr, $action:expr) => {
@@ -177,6 +189,14 @@ macro_rules! process_occupied_indices_breakable {
 
         result
     }};
+}
+
+pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+where
+    P: AsRef<Path>,
+{
+    let file = File::open(filename)?;
+    Ok(io::BufReader::new(file).lines())
 }
 
 pub const FLIPPED_CHESS_SQUARES: [ChessSquare; CHESS_SQUARE_COUNT] = [

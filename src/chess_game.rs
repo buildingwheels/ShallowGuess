@@ -1,32 +1,31 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::chess_position::ChessPosition;
 use crate::fen::fen_str_constants::START_POS;
+use crate::network::Network;
 use crate::search_engine::SearchEngine;
-use crate::types::{ChessMove, MilliSeconds, SearchDepth, EMPTY_CHESS_MOVE};
+use crate::types::{ChessMove, MilliSeconds, SearchDepth};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub struct ChessGame {
-    chess_position: ChessPosition,
+pub struct ChessGame<N: Network> {
+    chess_position: ChessPosition<N>,
     search_engine: SearchEngine,
-    expected_responding_move: ChessMove,
-    search_count: usize,
 }
 
-impl ChessGame {
-    pub fn new(chess_position: ChessPosition, search_engine: SearchEngine) -> Self {
+impl<N: Network> ChessGame<N> {
+    pub fn new(chess_position: ChessPosition<N>, search_engine: SearchEngine) -> Self {
         ChessGame {
             chess_position,
             search_engine,
-            expected_responding_move: EMPTY_CHESS_MOVE,
-            search_count: 0,
         }
     }
 
     pub fn reset_game(&mut self) {
         self.chess_position.set_from_fen(START_POS);
         self.search_engine.reset_game();
-        self.search_count = 0;
     }
 
     pub fn set_position_from_fen(&mut self, fen_str: &str) {
@@ -34,13 +33,10 @@ impl ChessGame {
     }
 
     pub fn set_hash_size(&mut self, hash_size: usize) {
-        if hash_size & (hash_size - 1) != 0 {
-            println!("Size {} not supported, needs to be power of 2", hash_size);
-        } else {
-            self.search_engine.set_hash_size(hash_size);
-        }
+        self.search_engine.set_hash_size(hash_size);
     }
 
+    #[inline]
     pub fn make_move(&mut self, chess_move: &ChessMove) {
         self.chess_position.make_move(chess_move);
     }
@@ -53,33 +49,25 @@ impl ChessGame {
     pub fn search_best_move(
         &mut self,
         allowed_time_ms: MilliSeconds,
+        extra_allowed_time_ms: MilliSeconds,
         force_stopped: Arc<AtomicBool>,
     ) -> ChessMove {
-        self.search_count += 1;
-
-        let (best_move, expected_responding_move) = self.search_engine.search_best_move(
+        self.search_engine.search_best_move(
             &mut self.chess_position,
             Duration::from_millis(allowed_time_ms),
+            Duration::from_millis(extra_allowed_time_ms),
+            None,
             force_stopped,
             true,
-        );
-
-        self.expected_responding_move = expected_responding_move;
-
-        best_move
+        )
     }
 
-    pub fn get_position(&self) -> &ChessPosition {
+    #[inline(always)]
+    pub fn get_position(&self) -> &ChessPosition<N> {
         &self.chess_position
     }
 
     pub fn get_debug_info(&self) -> String {
-        format!("{}", self.chess_position.to_fen())
-    }
-
-    pub fn require_extra_search_time(&self) -> bool {
-        self.search_count == 0
-            || (!self.expected_responding_move.is_empty()
-                && *self.chess_position.get_last_move() != self.expected_responding_move)
+        self.chess_position.to_fen()
     }
 }

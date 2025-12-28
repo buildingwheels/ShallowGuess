@@ -1,35 +1,26 @@
 import torch
 import torch.nn as nn
-import torch.ao.quantization as quantization
 
+FIXED_INPUT_LAYER_SIZE = 768
+FIXED_OUTPUT_LAYER_SIZE = 3
 
 class ShallowGuessNetwork(nn.Module):
     def __init__(self, hidden_layer_size):
         super(ShallowGuessNetwork, self).__init__()
         self.hidden_layer_size = hidden_layer_size
-        self.fc1 = nn.Linear(768, hidden_layer_size)
-        self.fc2 = nn.Linear(hidden_layer_size, 1)
+
+        self.fc1 = nn.Linear(FIXED_INPUT_LAYER_SIZE, hidden_layer_size, dtype=torch.float32)
+        self.fc2 = nn.Linear(hidden_layer_size, FIXED_OUTPUT_LAYER_SIZE, dtype=torch.float32)
         self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-        self.dequant = quantization.DeQuantStub()
+        self.dropout = nn.Dropout(0.05)
 
     def forward(self, x):
         x = self.fc1(x)
-        x = self.dequant(x)
         x = self.relu(x)
+        x = self.dropout(x)
         x = self.fc2(x)
-        x = self.sigmoid(x)
+
         return x
 
     def pub_name(self):
-        return f"1L-{self.hidden_layer_size}"
-
-
-def load_model(model_path):
-    model = ShallowGuessNetwork()
-    model.qconfig = quantization.default_qconfig
-    quantization.prepare_qat(model, inplace=True)
-
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
-    return model
+        return f"{self.hidden_layer_size}"

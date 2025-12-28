@@ -1,9 +1,12 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::bit_masks::{EMPTY_MASK, SQUARE_MASKS};
 use crate::def::{
-    A1, A8, BK, BLACK, BP, BR, CASTLING_FLAG_BLACK, CASTLING_FLAG_BLACK_KING_SIDE,
+    A1, A8, BB, BK, BLACK, BN, BP, BQ, BR, CASTLING_FLAG_BLACK, CASTLING_FLAG_BLACK_KING_SIDE,
     CASTLING_FLAG_BLACK_QUEEN_SIDE, CASTLING_FLAG_EMPTY, CASTLING_FLAG_WHITE,
     CASTLING_FLAG_WHITE_KING_SIDE, CASTLING_FLAG_WHITE_QUEEN_SIDE, CHESS_FILE_COUNT, D1, D8, F1,
-    F8, FILE_H, G1, G8, H1, H8, NO_PIECE, NO_SQUARE, WHITE, WK, WP, WR,
+    F8, FILE_H, G1, G8, H1, H8, NO_PIECE, NO_SQUARE, WB, WHITE, WK, WN, WP, WQ, WR,
 };
 use crate::fen::{
     fen_str_constants, get_chess_piece_from_char, get_chess_square_from_chars,
@@ -11,7 +14,8 @@ use crate::fen::{
 };
 use crate::network::Network;
 use crate::types::{
-    CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessSquare, HashKey, Score,
+    CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessSquare, HashKey, HistoryMove,
+    Score, EMPTY_HISTORY_MOVE,
 };
 use crate::util::{char_to_digit, digit_to_char, get_file};
 use crate::zobrist::{CASTLING_FLAG_HASH, ENPASSANT_SQUARE_HASH, PIECE_SQUARE_HASH, PLAYER_HASH};
@@ -31,10 +35,10 @@ pub struct RecoverablePositionState {
     saved_half_move_count: ChessMoveCount,
 }
 
-pub struct ChessPosition {
+pub struct ChessPosition<N: Network> {
     pub board: [ChessPiece; CHESS_SQUARE_COUNT],
     pub bitboards: [BitBoard; PIECE_TYPE_COUNT],
-    pub network: Network,
+    pub network: N,
     pub white_all_bitboard: BitBoard,
     pub black_all_bitboard: BitBoard,
     pub player: Player,
@@ -47,11 +51,12 @@ pub struct ChessPosition {
     pub hash_key: HashKey,
 
     hash_key_history: Vec<HashKey>,
-    chess_move_history: Vec<ChessMove>,
+    hash_key_history_per_search: Vec<HashKey>,
+    chess_move_history: Vec<HistoryMove>,
 }
 
-impl ChessPosition {
-    pub fn new(network: Network) -> Self {
+impl<N: Network> ChessPosition<N> {
+    pub fn new(network: N) -> Self {
         ChessPosition {
             board: [NO_PIECE; CHESS_SQUARE_COUNT],
             bitboards: [EMPTY_MASK; PIECE_TYPE_COUNT],
@@ -68,6 +73,7 @@ impl ChessPosition {
             hash_key: 0,
 
             hash_key_history: Vec::new(),
+            hash_key_history_per_search: Vec::new(),
             chess_move_history: Vec::new(),
         }
     }
@@ -75,6 +81,7 @@ impl ChessPosition {
     pub fn set_from_fen(&mut self, fen: &str) {
         self.hash_key = 0;
         self.hash_key_history.clear();
+        self.hash_key_history_per_search.clear();
         self.chess_move_history.clear();
 
         self.board = [NO_PIECE; CHESS_SQUARE_COUNT];
@@ -259,27 +266,92 @@ impl ChessPosition {
         fen
     }
 
+    pub fn clear_hash_key_history_per_search(&mut self) {
+        self.hash_key_history_per_search.clear();
+    }
+
     pub fn is_draw(&self) -> bool {
         if self.half_move_count >= FIFTY_MOVES {
             return true;
         }
 
-        let mut search_index = self.hash_key_history.len();
-        let end_index = search_index - self.half_move_count as usize;
+        if self.half_move_count < 2 {
+            return false;
+        }
 
-        while search_index > end_index {
-            search_index -= 1;
+        let full_history_len = self.hash_key_history.len();
+        let current_search_history_len = self.hash_key_history_per_search.len();
 
-            if self.hash_key == self.hash_key_history[search_index] {
-                return true;
+        let search_range = self.half_move_count as usize;
+
+        let mut search_index = 0;
+        let mut found_duplicate = false;
+
+        while search_index < search_range {
+            search_index += 1;
+
+            if search_index <= current_search_history_len {
+                if self.hash_key
+                    == self.hash_key_history_per_search[current_search_history_len - search_index]
+                {
+                    return true;
+                }
+            }
+
+            if search_index > full_history_len {
+                break;
+            }
+
+            if self.hash_key == self.hash_key_history[full_history_len - search_index] {
+                if found_duplicate {
+                    return true;
+                }
+
+                found_duplicate = true;
             }
         }
 
         false
     }
 
-    pub fn get_last_move(&self) -> &ChessMove {
-        self.chess_move_history.last().unwrap()
+    pub fn is_pawn_endgame(&self) -> bool {
+        self.bitboards[WN as usize]
+            | self.bitboards[WB as usize]
+            | self.bitboards[WR as usize]
+            | self.bitboards[WQ as usize]
+            | self.bitboards[BN as usize]
+            | self.bitboards[BB as usize]
+            | self.bitboards[BR as usize]
+            | self.bitboards[BQ as usize]
+            == EMPTY_MASK
+    }
+
+    pub fn get_last_move(&self) -> Option<&HistoryMove> {
+        if self.chess_move_history.len() > 0 {
+            let last_move = &self.chess_move_history[self.chess_move_history.len() - 1];
+
+            if last_move.chess_piece != NO_PIECE {
+                Some(last_move)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_second_last_move(&self) -> Option<&HistoryMove> {
+        if self.chess_move_history.len() > 1 {
+            let second_last_move = &self.chess_move_history[self.chess_move_history.len() - 2];
+
+            if second_last_move.chess_piece != NO_PIECE {
+                Some(second_last_move)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     pub fn get_static_score(&self) -> Score {
@@ -287,8 +359,12 @@ impl ChessPosition {
     }
 
     pub fn make_null_move(&mut self) -> ChessSquare {
+        self.hash_key_history.push(self.hash_key);
+        self.hash_key_history_per_search.push(self.hash_key);
+        self.chess_move_history.push(EMPTY_HISTORY_MOVE);
+
         let saved_enpassant_square = self.enpassant_square;
-    
+
         if self.enpassant_square != NO_SQUARE {
             self.hash_key ^= ENPASSANT_SQUARE_HASH[self.enpassant_square];
         }
@@ -303,9 +379,10 @@ impl ChessPosition {
     }
 
     pub fn unmake_null_move(&mut self, saved_enpassant_square: ChessSquare) {
-        self.hash_key ^= PLAYER_HASH[self.player as usize];
+        self.chess_move_history.pop();
+        self.hash_key_history_per_search.pop();
+        self.hash_key = self.hash_key_history.pop().unwrap();
         self.player ^= BLACK;
-        self.hash_key ^= PLAYER_HASH[self.player as usize];
 
         self.enpassant_square = saved_enpassant_square;
 
@@ -315,8 +392,8 @@ impl ChessPosition {
     }
 
     pub fn make_move(&mut self, chess_move: &ChessMove) -> RecoverablePositionState {
-        self.chess_move_history.push(*chess_move);
         self.hash_key_history.push(self.hash_key);
+        self.hash_key_history_per_search.push(self.hash_key);
 
         let saved_enpassant_square = self.enpassant_square;
         let saved_castling_flag = self.castling_flag;
@@ -338,6 +415,12 @@ impl ChessPosition {
         let from_square = chess_move.from_square;
         let to_square = chess_move.to_square;
         let moving_piece = self.board[from_square];
+
+        self.chess_move_history.push(HistoryMove {
+            chess_piece: moving_piece,
+            from_square,
+            to_square,
+        });
 
         if moving_piece == WP || moving_piece == BP {
             self.half_move_count = 0;
@@ -428,7 +511,6 @@ impl ChessPosition {
 
                 self.bitboards[moving_piece as usize] ^= from_square_mask;
                 self.bitboards[promotion_piece as usize] ^= to_square_mask;
-                self.bitboards[captured_piece as usize] ^= to_square_mask;
 
                 self.network.remove(moving_piece, from_square);
                 self.network.add(promotion_piece, to_square);
@@ -443,6 +525,7 @@ impl ChessPosition {
                 self.hash_key ^= PIECE_SQUARE_HASH[promotion_piece as usize][to_square];
 
                 if captured_piece != NO_PIECE {
+                    self.bitboards[captured_piece as usize] ^= to_square_mask;
                     self.network.remove(captured_piece, to_square);
                     self.hash_key ^= PIECE_SQUARE_HASH[captured_piece as usize][to_square];
 
@@ -607,6 +690,7 @@ impl ChessPosition {
 
     pub fn unmake_move(&mut self, chess_move: &ChessMove, saved_state: RecoverablePositionState) {
         self.chess_move_history.pop();
+        self.hash_key_history_per_search.pop();
         self.hash_key = self.hash_key_history.pop().unwrap();
 
         self.full_move_count -= 1;

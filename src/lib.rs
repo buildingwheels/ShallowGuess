@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
+#![feature(portable_simd)]
+
 pub mod bit_masks;
 pub mod chess_game;
 pub mod chess_move_gen;
@@ -7,6 +12,7 @@ pub mod engine_info;
 pub mod fen;
 pub mod network;
 pub mod network_weights;
+pub mod prng;
 pub mod search_engine;
 pub mod time;
 pub mod transpos;

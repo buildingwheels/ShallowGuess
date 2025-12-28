@@ -1,7 +1,10 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use shallow_guess::chess_position::ChessPosition;
 use shallow_guess::def::STACK_SIZE_BYTES;
 use shallow_guess::fen::format_chess_move;
-use shallow_guess::network::Network;
+use shallow_guess::network::QuantizedNetwork;
 use shallow_guess::search_engine::SearchEngine;
 use shallow_guess::transpos::{TranspositionTable, DEFAULT_HASH_SIZE_MB};
 use std::sync::atomic::AtomicBool;
@@ -20,7 +23,7 @@ fn main() -> std::io::Result<()> {
     thread::Builder::new()
         .stack_size(STACK_SIZE_BYTES)
         .spawn(move || {
-            let network = Network::new();
+            let network = QuantizedNetwork::new();
             let mut chess_position = ChessPosition::new(network);
             let transposition_table = TranspositionTable::new(DEFAULT_HASH_SIZE_MB);
             let mut search_engine = SearchEngine::new(transposition_table);
@@ -39,9 +42,11 @@ fn main() -> std::io::Result<()> {
 
                 println!("Testing [{}]", fen);
 
-                let (best_move, _) = &search_engine.search_best_move(
+                let best_move = &search_engine.search_best_move(
                     &mut chess_position,
                     Duration::from_secs(search_time_secs),
+                    Duration::from_secs(search_time_secs),
+                    None,
                     Arc::new(AtomicBool::new(false)),
                     true,
                 );
@@ -62,6 +67,8 @@ fn main() -> std::io::Result<()> {
                     success_count,
                     success_count + failure_count
                 );
+
+                search_engine.reset_game();
             }
 
             println!(
@@ -71,7 +78,6 @@ fn main() -> std::io::Result<()> {
                 failure_count,
                 success_count * 100 / (success_count + failure_count)
             );
-            println!("----------------------------------------------------");
         })
         .unwrap()
         .join()

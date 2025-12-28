@@ -1,7 +1,10 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use shallow_guess::chess_game::ChessGame;
 use shallow_guess::chess_position::ChessPosition;
 use shallow_guess::def::STACK_SIZE_BYTES;
-use shallow_guess::network::Network;
+use shallow_guess::network::QuantizedNetwork;
 use shallow_guess::search_engine::SearchEngine;
 use shallow_guess::transpos::{TranspositionTable, DEFAULT_HASH_SIZE_MB};
 use shallow_guess::uci::process_command;
@@ -22,7 +25,7 @@ fn main() {
 }
 
 fn run_uci_game() {
-    let chess_position = ChessPosition::new(Network::new());
+    let chess_position = ChessPosition::new(QuantizedNetwork::new());
     let transposition_table = TranspositionTable::new(DEFAULT_HASH_SIZE_MB);
     let search_engine = SearchEngine::new(transposition_table);
     let chess_game = Arc::new(Mutex::new(ChessGame::new(chess_position, search_engine)));

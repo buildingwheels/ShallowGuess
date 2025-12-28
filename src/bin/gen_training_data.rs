@@ -1,68 +1,69 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
+use std::env;
 use std::fs::File;
-use std::io::{BufRead, LineWriter, Write};
-use std::path::Path;
+use std::io::{LineWriter, Write};
+use std::option::Option;
 use std::time::Instant;
-use std::{env, io};
 
 use shallow_guess::chess_move_gen::{
     generate_captures_and_promotions, is_in_check, is_invalid_position,
 };
 use shallow_guess::chess_position::ChessPosition;
 use shallow_guess::def::{A1, BLACK, H8, NO_PIECE, PIECE_TYPE_COUNT, WHITE};
-use shallow_guess::network::{calculate_network_input_layer_index, Network};
+use shallow_guess::network::{calculate_network_input_layer_index, FastNoOpNetwork, Network};
 use shallow_guess::network_weights::INPUT_LAYER_SIZE;
-use shallow_guess::types::{ChessPiece, ChessSquare, Score, SearchPly};
-use shallow_guess::util::{NetworkInputs, FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
+use shallow_guess::types::{ChessMoveCount, ChessPiece, ChessSquare, Score, SearchPly};
+use shallow_guess::util::{
+    read_lines, NetworkInputs, FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES,
+};
 
 const ONE_SYMBOL: &str = "X,";
 
-const MAX_PLY: SearchPly = 8;
-
 const MATERIAL_SCORES: [Score; PIECE_TYPE_COUNT] =
     [0, 1, 3, 3, 5, 10, 100, -1, -3, -3, -5, -10, -100];
+
+const MAX_EXCHANGE_SEARCH_PLY: SearchPly = 8;
 
 fn main() {
     let mut args = env::args().into_iter();
     args.next().unwrap();
 
-    let original_fen_file = args.next().unwrap();
     let processed_fen_file = args.next().unwrap();
     let output_file = args.next().unwrap();
-    let filter_non_static_posistions = args.next().unwrap().parse::<bool>().unwrap();
-    let skip_count = args.next().unwrap().parse::<usize>().unwrap();
-    let max_count = args.next().unwrap().parse::<usize>().unwrap();
     let batch_size = args.next().unwrap().parse::<usize>().unwrap();
+    let log_file = args.next();
 
-    generate_raw_training_set(
-        &original_fen_file,
-        &processed_fen_file,
-        skip_count,
-        max_count,
-    );
-    generate_training_set(
-        &processed_fen_file,
-        &output_file,
-        batch_size,
-        filter_non_static_posistions,
-    );
+    generate_training_set(&processed_fen_file, &output_file, batch_size, log_file);
 }
 
 fn generate_training_set(
-    raw_training_set_file: &str,
+    processed_fen_file: &str,
     output_file_path: &str,
     batch_count: usize,
-    filter_non_static_posistions: bool,
+    log_file_path: Option<String>,
 ) {
     let output_file = File::create(output_file_path).unwrap();
     let mut file_writer = LineWriter::new(output_file);
+
+    let mut log_writer: Option<LineWriter<File>> = None;
+    if let Some(log_path) = log_file_path {
+        let log_file = File::create(log_path).unwrap();
+        log_writer = Some(LineWriter::new(log_file));
+    }
 
     let mut training_size = 0;
     let mut buffered_line_count = 0;
     let mut output_batch_buffer = String::new();
 
+    let mut total_positions = 0;
+    let mut non_static_filtered_count = 0;
+    let mut static_kept_count = 0;
+
     let start_time = Instant::now();
 
-    if let Ok(lines) = read_lines(raw_training_set_file) {
+    if let Ok(lines) = read_lines(processed_fen_file) {
         for line in lines.flatten() {
             let line = line.trim();
 
@@ -73,25 +74,48 @@ fn generate_training_set(
             let splits = line.split(',').collect::<Vec<&str>>();
             let fen = splits[0];
 
-            let mut chess_position = ChessPosition::new(Network::new());
+            let mut chess_position = ChessPosition::new(FastNoOpNetwork::new());
             chess_position.set_from_fen(fen);
 
-            if filter_non_static_posistions {
-                if is_in_check(&chess_position, chess_position.player) {
-                    continue;
-                }
+            total_positions += 1;
 
-                let static_score = get_material_score(&chess_position);
-                let q_score =
-                    exchange_search(&mut chess_position, static_score, static_score + 1, 0);
-
-                if q_score != static_score {
-                    continue;
+            if is_in_check(&chess_position) {
+                if let Some(ref mut writer) = log_writer {
+                    writeln!(writer, "Filtered In-check position {}", fen).unwrap();
                 }
+                non_static_filtered_count += 1;
+                continue;
+            }
+
+            let static_score = get_material_score(&chess_position);
+            let q_score = exchange_search(&mut chess_position, static_score, static_score + 1, 0);
+
+            if q_score != static_score {
+                if let Some(ref mut writer) = log_writer {
+                    writeln!(
+                        writer,
+                        "Filtered Non-static position {}, static_score: {}, q_score: {}",
+                        fen, static_score, q_score
+                    )
+                    .unwrap();
+                }
+                non_static_filtered_count += 1;
+                continue;
+            } else {
+                if let Some(ref mut writer) = log_writer {
+                    writeln!(
+                        writer,
+                        "Keeping Static position {}, static_score: {}, q_score: {}",
+                        fen, static_score, q_score
+                    )
+                    .unwrap();
+                }
+                static_kept_count += 1;
             }
 
             let network_inputs = parse_network_inputs_from_fen(&chess_position);
             let mut result = splits[1].parse::<f64>().unwrap();
+            let position_count = splits[2].parse::<ChessMoveCount>().unwrap();
 
             if chess_position.player == BLACK {
                 result = 1. - result;
@@ -116,7 +140,7 @@ fn generate_training_set(
                 output_batch_buffer.push_str(&format!("{},", zero_count));
             }
 
-            output_batch_buffer.push_str(&format!("{}\n", result));
+            output_batch_buffer.push_str(&format!("{},{}\n", result, position_count));
             training_size += 1;
             buffered_line_count += 1;
 
@@ -136,81 +160,27 @@ fn generate_training_set(
         output_file_path,
         start_time.elapsed().as_secs()
     );
+
+    println!("Total positions processed: {}", total_positions);
+    println!("Positions filtered: {}", non_static_filtered_count);
+    println!("Positions kept: {}", static_kept_count);
+    println!("Final training set size: {}", training_size);
 }
 
-fn generate_raw_training_set(
-    fen_file: &str,
-    output_file_path: &str,
-    skip_opening_positions: usize,
-    max_positions_per_game: usize,
-) {
-    let output_file = File::create(output_file_path).unwrap();
-    let mut file_writer = LineWriter::new(output_file);
-    let mut current_game_result = 0.;
-    let mut position_count = 0;
-    let mut skip_current_game = false;
-    let mut skipped_count = 0;
-
-    if let Ok(lines) = read_lines(fen_file) {
-        for line in lines.flatten() {
-            let line = line.trim();
-
-            if line.is_empty() {
-                continue;
-            }
-
-            if line.contains("Termination") {
-                skip_current_game = true;
-            } else if line.contains("Result") {
-                if line.contains("1/2") {
-                    current_game_result = 0.5;
-                } else if line.contains("0-1") {
-                    current_game_result = 0.;
-                } else if line.contains("1-0") {
-                    current_game_result = 1.;
-                }
-
-                position_count = 0;
-                skip_current_game = false;
-            } else if !line.contains("[") {
-                if skip_current_game {
-                    skipped_count += 1;
-                    continue;
-                }
-
-                position_count += 1;
-
-                if position_count > skip_opening_positions
-                    && position_count < max_positions_per_game
-                {
-                    file_writer
-                        .write(format!("{},{}\n", line.trim(), current_game_result).as_bytes())
-                        .unwrap();
-                }
-            }
-        }
-    }
-
-    println!(
-        "Completed generating raw training set with size {} (skipped {}) to: {}",
-        position_count, skipped_count, output_file_path
-    );
-}
-
-fn exchange_search(
-    chess_position: &mut ChessPosition,
+fn exchange_search<N: Network>(
+    chess_position: &mut ChessPosition<N>,
     mut alpha: Score,
     beta: Score,
     ply: SearchPly,
 ) -> Score {
     let static_eval = get_material_score(chess_position);
 
-    if ply > MAX_PLY {
+    if ply > MAX_EXCHANGE_SEARCH_PLY {
         return static_eval;
     }
 
     if static_eval >= beta {
-        return beta;
+        return static_eval;
     }
 
     if static_eval > alpha {
@@ -232,7 +202,7 @@ fn exchange_search(
         chess_position.unmake_move(&chess_move, saved_state);
 
         if score >= beta {
-            return beta;
+            return score;
         }
 
         if score > alpha {
@@ -243,7 +213,7 @@ fn exchange_search(
     alpha
 }
 
-fn parse_network_inputs_from_fen(chess_position: &ChessPosition) -> NetworkInputs {
+fn parse_network_inputs_from_fen<N: Network>(chess_position: &ChessPosition<N>) -> NetworkInputs {
     let mut network_inputs = vec![0; INPUT_LAYER_SIZE];
 
     if chess_position.player == WHITE {
@@ -271,7 +241,7 @@ fn parse_network_inputs_from_fen(chess_position: &ChessPosition) -> NetworkInput
     network_inputs
 }
 
-fn get_material_score(chess_position: &ChessPosition) -> Score {
+fn get_material_score<N: Network>(chess_position: &ChessPosition<N>) -> Score {
     let mut score = 0;
 
     for chess_square in A1..=H8 {
@@ -302,12 +272,4 @@ fn update_mirrored_training_network_inputs(
         MIRRORED_CHESS_PIECES[chess_piece as usize],
         FLIPPED_CHESS_SQUARES[chess_square],
     )] = 1;
-}
-
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-where
-    P: AsRef<Path>,
-{
-    let file = File::open(filename)?;
-    Ok(io::BufReader::new(file).lines())
 }

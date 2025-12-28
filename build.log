@@ -1,0 +1,19 @@
+[2025-12-25 22:40:39] Building project: shallow_guess
+[2025-12-25 22:40:39] Building for linux with features: sse (flags: +sse3,+ssse3,+sse4.1,+sse4.2,+bmi1,+bmi2)
+   Compiling shallow_guess v1.0.0 (/home/andy/Repos/ShallowGuess)
+    Finished `release` profile [optimized] target(s) in 2.20s
+[2025-12-25 22:40:42] Created: binaries/shallow_guess_linux_amd64_sse
+[2025-12-25 22:40:42] Building for windows with features: sse (flags: +sse3,+ssse3,+sse4.1,+sse4.2,+bmi1,+bmi2)
+   Compiling shallow_guess v1.0.0 (/home/andy/Repos/ShallowGuess)
+    Finished `release` profile [optimized] target(s) in 2.14s
+[2025-12-25 22:40:44] Created: binaries/shallow_guess_windows_amd64_sse.exe
+[2025-12-25 22:40:44] Building for linux with features: avx2 (flags: +avx2,+bmi1,+bmi2)
+   Compiling shallow_guess v1.0.0 (/home/andy/Repos/ShallowGuess)
+    Finished `release` profile [optimized] target(s) in 2.19s
+[2025-12-25 22:40:46] Created: binaries/shallow_guess_linux_amd64_avx2
+[2025-12-25 22:40:46] Building for windows with features: avx2 (flags: +avx2,+bmi1,+bmi2)
+   Compiling shallow_guess v1.0.0 (/home/andy/Repos/ShallowGuess)
+    Finished `release` profile [optimized] target(s) in 2.18s
+[2025-12-25 22:40:48] Created: binaries/shallow_guess_windows_amd64_avx2.exe
+[2025-12-25 22:40:48] Build completed successfully!
+[2025-12-25 22:40:48] Binaries available in: binaries/

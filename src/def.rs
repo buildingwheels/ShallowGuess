@@ -1,6 +1,9 @@
+// Copyright (c) 2025 Zixiao Han
+// SPDX-License-Identifier: MIT
+
 use crate::types::{CastlingFlag, ChessFile, ChessPiece, ChessSquare, Player, Score};
 
-pub const STACK_SIZE_BYTES: usize = 32 * 1024 * 1024;
+pub const STACK_SIZE_BYTES: usize = 64 * 1024 * 1024;
 
 pub const CHESS_SQUARE_COUNT: usize = 64;
 pub const PIECE_TYPE_COUNT: usize = 13;
@@ -152,3 +155,8 @@ pub const CASTLING_FLAG_BLACK_QUEEN_SIDE: CastlingFlag = 0b1000;
 
 pub const MATE_SCORE: Score = 20_000;
 pub const TERMINATE_SCORE: Score = 10_000;
+pub const DRAW_SCORE: Score = 0;
+
+pub const PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
+    0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
+];
