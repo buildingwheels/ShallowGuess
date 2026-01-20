@@ -12,6 +12,7 @@ pub const MAX_HASH_SIZE_MB: MegaBytes = 65536;
 pub const HASH_ENTRY_PER_MB: usize = 32768;
 
 const HASH_UTILIZATION_RATIO: usize = 1000;
+const MAX_AGE_DIFFERENCE: ChessMoveCount = 255;
 
 type CompressedChessMove = u32;
 
@@ -56,7 +57,7 @@ const EMPTY_INTERNAL_TABLE_ENTRY: InternalTableEntry = InternalTableEntry {
 
 pub struct TranspositionTable {
     table_size: usize,
-    always_replace_table: Vec<InternalTableEntry>,
+    internal_table: Vec<InternalTableEntry>,
     utilization_count: usize,
 }
 
@@ -66,7 +67,7 @@ impl TranspositionTable {
 
         TranspositionTable {
             table_size,
-            always_replace_table: vec![EMPTY_INTERNAL_TABLE_ENTRY; table_size],
+            internal_table: vec![EMPTY_INTERNAL_TABLE_ENTRY; table_size],
             utilization_count: 0,
         }
     }
@@ -75,18 +76,18 @@ impl TranspositionTable {
         let table_size = new_size_mb * HASH_ENTRY_PER_MB;
         self.table_size = table_size;
 
-        self.always_replace_table = vec![EMPTY_INTERNAL_TABLE_ENTRY; table_size];
+        self.internal_table = vec![EMPTY_INTERNAL_TABLE_ENTRY; table_size];
         self.utilization_count = 0;
     }
 
     pub fn clear(&mut self) {
-        self.always_replace_table = vec![EMPTY_INTERNAL_TABLE_ENTRY; self.table_size];
+        self.internal_table = vec![EMPTY_INTERNAL_TABLE_ENTRY; self.table_size];
         self.utilization_count = 0;
     }
 
     pub fn get(&self, key: HashKey, safety_check: BitBoard) -> Option<TableEntry> {
         let index = key & (self.table_size - 1);
-        let entry = &self.always_replace_table[index];
+        let entry = &self.internal_table[index];
 
         if entry.key == key && entry.safety_check == safety_check {
             return Some(convert_to_external_entry(entry));
@@ -99,13 +100,43 @@ impl TranspositionTable {
         let index = new_entry.key & (self.table_size - 1);
         let new_internal_entry = convert_to_internal_entry(new_entry);
 
-        let existing_entry = &mut self.always_replace_table[index];
+        let existing_entry = &mut self.internal_table[index];
+
+        if existing_entry.key != 0 {
+            let age_diff = new_internal_entry.age.wrapping_sub(existing_entry.age);
+            if age_diff > MAX_AGE_DIFFERENCE {
+                existing_entry.clone_from(&new_internal_entry);
+                return;
+            }
+        }
 
         if existing_entry.key == 0 {
             self.utilization_count += 1;
-        }
+            existing_entry.clone_from(&new_internal_entry);
+        } else {
+            if existing_entry.key == new_entry.key {
+                existing_entry.clone_from(&new_internal_entry);
+                return;
+            }
 
-        existing_entry.clone_from(&new_internal_entry);
+            let should_replace = match (new_internal_entry.flag, existing_entry.flag) {
+                (HashFlag::Exact, HashFlag::LowBound | HashFlag::HighBound) => true,
+                (HashFlag::Exact, HashFlag::Exact) => {
+                    new_internal_entry.depth > existing_entry.depth
+                        || (new_internal_entry.depth == existing_entry.depth
+                            && new_internal_entry.age < existing_entry.age)
+                }
+                _ => {
+                    new_internal_entry.depth > existing_entry.depth
+                        || (new_internal_entry.depth == existing_entry.depth
+                            && new_internal_entry.age < existing_entry.age)
+                }
+            };
+
+            if should_replace {
+                existing_entry.clone_from(&new_internal_entry);
+            }
+        }
     }
 
     pub fn get_utilization_permil(&self) -> usize {

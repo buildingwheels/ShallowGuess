@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 
 const FIXED_INPUT_LAYER_SIZE: usize = 768;
-const FIXED_OUTPUT_LAYER_SIZE: usize = 3;
+const FIXED_OUTPUT_LAYER_SIZE: usize = 1;
 
 fn main() {
     let config_content =
@@ -30,11 +30,13 @@ fn main() {
 }
 
 fn load_weights(hidden_layer_size: usize) {
-    let weights_file = &format!("resources/weights/{}.weights", hidden_layer_size);
+    let weights_file = &format!(
+        "resources/quantized_weights/{}.quantized_weights",
+        hidden_layer_size
+    );
     let out_file = "src/network_weights.rs";
 
-    let file_content =
-        fs::read_to_string(weights_file).expect("Failed to read the model weights file");
+    let file_content = fs::read_to_string(weights_file).expect("Failed to read model weights file");
 
     let values: Vec<f32> = file_content
         .split(',')
@@ -66,7 +68,7 @@ fn load_weights(hidden_layer_size: usize) {
     let hidden_layer_to_output_layer_weights = &values[start..start + hidden_to_output_size];
     start += hidden_to_output_size;
 
-    let output_biases = &values[start..start + output_biases_size];
+    let output_bias = values[start];
     start += output_biases_size;
 
     let scaling_factor = values[start];
@@ -79,10 +81,6 @@ fn load_weights(hidden_layer_size: usize) {
     code.push_str(&format!(
         "pub const HIDDEN_LAYER_SIZE: usize = {};\n",
         hidden_layer_size
-    ));
-    code.push_str(&format!(
-        "pub const OUTPUT_LAYER_SIZE: usize = {};\n",
-        FIXED_OUTPUT_LAYER_SIZE
     ));
 
     code.push_str(&format!(
@@ -104,29 +102,20 @@ fn load_weights(hidden_layer_size: usize) {
     code.push_str("];\n\n");
 
     code.push_str(&format!(
-        "pub const HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS: [[f32; {}]; {}] = [\n",
-        hidden_layer_size, FIXED_OUTPUT_LAYER_SIZE
+        "pub const HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS: [f32; {}] = [\n",
+        hidden_layer_size
     ));
 
-    for output_idx in 0..FIXED_OUTPUT_LAYER_SIZE {
-        code.push_str("    [");
-        for hidden_idx in 0..hidden_layer_size {
-            let weight_idx = output_idx * hidden_layer_size + hidden_idx;
-            let value = hidden_layer_to_output_layer_weights[weight_idx];
-            code.push_str(&format!("{}, ", string_float(value)));
-        }
-        code.push_str("],\n");
+    for hidden_idx in 0..hidden_layer_size {
+        let value = hidden_layer_to_output_layer_weights[hidden_idx];
+        code.push_str(&format!("{}, ", string_float(value)));
     }
     code.push_str("];\n\n");
 
     code.push_str(&format!(
-        "pub const OUTPUT_BIASES: [f32; {}] = [\n",
-        output_biases_size
+        "pub const OUTPUT_BIAS: f32 = {};\n\n",
+        string_float(output_bias)
     ));
-    for &value in output_biases {
-        code.push_str(&format!("{}, ", string_float(value)));
-    }
-    code.push_str("];\n\n");
 
     code.push_str(&format!(
         "pub const SCALING_FACTOR: f32 = {};\n",

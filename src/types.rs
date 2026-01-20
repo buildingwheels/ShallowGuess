@@ -20,6 +20,7 @@ pub type MilliSeconds = u64;
 pub type MegaBytes = usize;
 pub type Score = i32;
 pub type HashKey = usize;
+pub type ChessPieceCount = u32;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ChessMoveType {
@@ -56,6 +57,7 @@ pub const EMPTY_CHESS_MOVE: ChessMove = ChessMove {
     promotion_piece: 0,
     move_type: ChessMoveType::Regular,
 };
+
 pub struct SortableChessMove {
     pub chess_move: ChessMove,
     pub priority: Score,
@@ -100,4 +102,3 @@ pub const EMPTY_HISTORY_MOVE: HistoryMove = HistoryMove {
     from_square: NO_SQUARE,
     to_square: NO_SQUARE,
 };
- 

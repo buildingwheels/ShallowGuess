@@ -20,7 +20,9 @@ impl TimeInfo {
 }
 
 const DEFAULT_REMAINING_MOVE_COUNT: ChessMoveCount = 40;
-const INCREMENT_TIME_BUFFER_RATIO: MilliSeconds = 2;
+const MIN_REMAINING_MOVE_COUNT_TO_USE_EXTRA_TIME: ChessMoveCount = 3;
+const MIN_REMAINING_TIME_MILLIS_TO_USE_EXTRA_TIME: MilliSeconds = 10_000;
+const BUFFER_TIME_MILLIS: MilliSeconds = 10;
 
 pub fn calculate_optimal_time_for_next_move(
     time_control: &TimeInfo,
@@ -33,14 +35,19 @@ pub fn calculate_optimal_time_for_next_move(
 
     let base_time = time_control.remaining_time_millis / remaining_move_count as MilliSeconds;
 
-    let extra_time = if remaining_move_count > 1 {
-        base_time / 2
+    let extra_time = if remaining_move_count >= MIN_REMAINING_MOVE_COUNT_TO_USE_EXTRA_TIME
+        && time_control.remaining_time_millis >= MIN_REMAINING_TIME_MILLIS_TO_USE_EXTRA_TIME
+    {
+        base_time
     } else {
         0
     };
 
-    (
-        base_time + time_control.increment_time_millis / INCREMENT_TIME_BUFFER_RATIO,
-        extra_time,
-    )
+    let mut total_base_time = base_time + time_control.increment_time_millis;
+
+    if total_base_time > BUFFER_TIME_MILLIS {
+        total_base_time -= BUFFER_TIME_MILLIS;
+    }
+
+    (total_base_time, extra_time)
 }

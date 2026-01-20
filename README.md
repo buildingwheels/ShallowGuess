@@ -1,65 +1,83 @@
 # Shallow Guess
 
-A strong UCI-compatible chess engine powered by a neural network **trained solely on game results**.
+A strong chess engine featuring a shallow neural network for evaluation, trained solely on game results.
+
+## Table of Contents
+- [Features](#features)
+  - [Board Representation and Move Generation](#board-representation-and-move-generation)
+  - [Search Algorithms](#search-algorithms)
+  - [Evaluation](#evaluation)
+- [Available Models](#available-models)
+- [Training](#training)
+- [Utility Programs](#utility-programs)
+- [Build](#build)
+- [Optimized CPU Target Features](#optimized-cpu-target-features)
+- [Acknowledgments](#acknowledgments)
 
 ## Features
 
 ### Board Representation and Move Generation
-- **Naive Bitboards**
+
+- **Bitboards with Real-time Bit Scan (No Magic Lookup)**
 - **Phased Move Generation**
 
-### Search Algorithm
+### Search Algorithms
+
 - **Principal Variation Search**
 - **Iterative Deepening**
 - **Alpha-Beta Pruning**
 - **Aspiration Windows**
 - **Quiescence Search**
+- **MVV-LVA Sorting**
 - **Static Exchange Evaluation (SEE)**
 - **History Heuristic**
 - **Killer Heuristic**
 - **Counter Move Heuristic**
 - **Follow-up Move Heuristic**
+- **Null Move Pruning with Verification**
 - **Late Move Reductions**
-- **Null Move Pruning**
+- **SEE Pruning**
+- **Static Pruning**
 - **Zobrist Hashing**
-- **Two-tier Transposition Table**
+- **Depth-Preferred Transposition Table with Aging**
 
 ### Evaluation
+
 - **Partially Quantized Neural Network**
 - **Configurable Architecture**
 - **Training on Game Results Only**
-- **SIMD Optimizations** (SSE, AVX2)
+- **SIMD Optimizations for Inference**
 
 #### Network Architecture
-```
-Input Layer: 768 neurons (12 piece types × 64 squares)
-        ↓
-Hidden Layer: N neurons (configurable, e.g., 512)
-        ↓
-Output Layer: 3 neurons (Loss/Draw/Win probabilities)
+
+**Coach Model:**
+```mermaid
+graph TD
+    A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares] --> B[Hidden Layer<br/>N neurons<br/>configurable, e.g., 1024]
+    B --> C[Hidden Layer<br/>32 neurons<br/>fixed]
+    C --> D[Output Layer<br/>3 neurons<br/>Win/Draw/Loss probabilities]
 ```
 
-The network uses **dynamic quantization** (int8) for the input-to-hidden layer weights to optimize inference performance.
+**Player Model:**
+```mermaid
+graph TD
+    A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares] --> B[Hidden Layer<br/>N neurons<br/>configurable, e.g., 512]
+    B --> C[Output Layer<br/>1 neuron<br/>Win probability]
+```
+
+The network employs simulated quantization-aware training with post-training dynamic quantization (int8) for input-to-hidden layer weights. The `quantize_weights` utility handles the quantization process.
 
 #### Available Models
 
-The engine comes with three pre-trained models of different hidden layer sizes:
+The engine includes several pre-trained models which can be found under `resources/models/`.
 
-| Model | Hidden Layer Size | Model File | Weights File |
-|-------|-------------------|------------|--------------|
-| **512** (default) | 512 | `resources/models/512.pth` | `resources/weights/512.weights` |
-| **256** | 256 | `resources/models/256.pth` | `resources/weights/256.weights` |
-| **1024** | 1024 | `resources/models/1024.pth` | `resources/weights/1024.weights` |
-
-**Note:** The 512 model is the default for release builds.
+**Note:** The "Coach-*" models are for intermediate training purposes and should not be used for real-time evaluation (see the Training section).
 
 #### Switching Models
 
-To use a different model, edit `config/network.cfg` and set the `hidden_layer_size`:
+**Note:** For tournament play, use the default model, which offers optimal strength.  
 
-```bash
-hidden_layer_size=<256/512/1024>
-```
+To use a different model, edit `config/network.cfg` and set the `hidden_layer_size`.  
 
 Then rebuild the engine:
 
@@ -67,16 +85,22 @@ Then rebuild the engine:
 cargo build --release
 ```
 
-## Training Model
+## Training
 
-The neural network is trained on chess game results using a multi-step pipeline that processes PGN data into training-ready format.
+The neural network is trained on chess game results using a multi-step pipeline that processes PGN data into a training-ready format.
 
-For details, reference to **[TrainingGuide.md](TrainingGuide.md)**.
+**Data Format:**
+- Training data uses compressed run-length encoding to minimize storage
+- Features are encoded as `[zero_count]X[zero_count]X...` where `X` represents a 1
+- Efficiently compresses sparse 768-dimensional feature vectors
+- Player model training uses hybrid data format combining original game results and coach model annotations
+
+For detailed training steps, refer to **[TrainingGuide.md](TrainingGuide.md)**.
 
 ## Utility Programs
 
 ### Engine Parameter Testing
-The `param_test` utility tests engine parameters against EPD test suites.
+The `param_test` utility evaluates engine parameters against EPD test suites.
 
 ```bash
 cargo run --bin param_test [epd_file] [search_time_secs]
@@ -89,55 +113,65 @@ The `zobrist_key_gen` utility generates optimal hash tables by testing multiple 
 cargo run --bin zobrist_key_gen [fen_file_path] [max_seeds_count]
 ```
 
+### Static Pruning Margin Analysis
+The `find_static_pruning_margin` utility analyzes positions to determine optimal static pruning margin by comparing static evaluation scores with 1-ply search results.
+
+```bash
+cargo run --bin find_static_pruning_margin [fen_file_path] [stats_batch_count]
+```
+
+**Parameters:**
+- `fen_file_path`: Input FEN file (CSV format: `fen,result`)
+- `stats_batch_count`: Number of positions to process before printing statistics
+
+**Output:**
+- Statistics on potential score drops (static_score - search_score)
+- Percentile values (p95, p99, p99.9, p99.99) to help set safe pruning margin
+- Positions in check or with terminal scores are automatically filtered out
+
+**Example:**
+```bash
+cargo run --bin find_static_pruning_margin data/filtered_fens.txt 1000
+```
+
 ## Build
 
 ### Pre-compiled Binaries
-Pre-compiled binaries have been removed since 1.0 due to complexity in supporting multiple CPU features. Please compile directly from source code.
+Starting with version 1.0, pre-compiled binaries are no longer provided due to the complexity of supporting multiple CPU instruction sets. Compilation from source is required.
 
 ### Compile from Source
 
 #### Prerequisites
-- **Rust Nightly** - This project requires Rust nightly for SIMD support. Install from [rustup.rs](https://rustup.rs/)
-- **Git** - To clone the repository
-- **Python 3.10+ & PyTorch** - Only needed for training new models
-- **jq** - For parsing JSON metadata (required for build script)
+- **Rust Nightly** - Install from [rustup.rs](https://rustup.rs/). Required for portable SIMD support from the standard library.
+- **Git** - For cloning the repository
+- **Python 3.10+ & PyTorch** - Required only for training new models
+- **jq** - For parsing JSON metadata (required by the build script)
 
 **Switch to Rust Nightly:**
 ```bash
 rustup install nightly
 rustup default nightly
-# Or override for just this project:
+# Or set nightly only for this project:
 rustup override set nightly
 ```
 
 #### Build Steps
 
 ##### Quick Build (Single Binary)
-1. **Clone the repository:**
+1. **Build the binary:**
    ```bash
-   git clone https://github.com/your-repo/shallow-guess.git
-   cd shallow-guess
+   export RUSTFLAGS="-C target-cpu=native"
+   cargo build --release
    ```
 
-2. **Verify model files:**
-   - Trained models are in `resources/models/`
-   - Exported weights are in `resources/weights/`
-   - Configure model in `config/network.cfg`
-
-3. **Build the engine:**
+2. **Run the engine:**
    ```bash
-    export RUSTFLAGS="-C target-cpu=native"
-    cargo build --release
+   ./target/release/shallow_guess
    ```
-
-4. **Run the engine:**
-    ```bash
-     ./target/release/shallow_guess
-    ```
 
 ## Optimized CPU Target Features
 
-This engine includes SIMD optimizations for various CPU instruction sets. The build system automatically detects and uses the best available features based on your CPU.
+Since version 1.0, SIMD optimizations using Rust's portable SIMD have been added to support mainstream CPU instruction sets. The build system automatically detects and uses the optimal features available on your CPU.
 
 ### Supported Instruction Sets
 
@@ -150,7 +184,7 @@ This engine includes SIMD optimizations for various CPU instruction sets. The bu
 
 ### Building with Specific Features
 
-The `target-cpu=native` flag enables all available features for your CPU:
+The `target-cpu=native` flag enables all CPU-specific optimizations available on your system:
 
 ```bash
 # Build with native CPU optimizations (recommended)
@@ -172,44 +206,21 @@ cargo build --release
 # SSE4.1 only
 export RUSTFLAGS="-C target-feature=+sse4.1"
 cargo build --release
-
-# Build for x86-64 baseline (SSE2)
-export RUSTFLAGS="-C target-cpu=x86-64"
-cargo build --release
 ```
-
-### Checking Available Features
-
-To check which CPU features are available on your system:
-
-```bash
-# Linux
-lscpu | grep "Flags"
-
-# macOS
-sysctl -n machdep.cpu.features
-
-# Or check during build
-cargo build --release 2>&1 | grep "target-feature"
-```
-
-### Architecture Support
-
-- **x86_64**: Full support for AVX-512F, AVX2/AVX, SSE4.1/SSE2
-- **aarch64**: Support for ARM NEON (f32x4, i16x8)
-- **Other**: Fallback to 4-lane SIMD
 
 ## Acknowledgments
 
 ### PGN Extract
-[pgn-extract](https://www.cs.kent.ac.uk/people/staff/djb/pgn-extract/) was used for extracting training positions from PGN files.
+[pgn-extract](https://www.cs.kent.ac.uk/people/staff/djb/pgn-extract/) was used to extract training positions from PGN files.
 
 ### CCRL (Computer Chess Rating Lists)
-All training data for the latest release version was generated from historical 40/15 games downloaded from the CCRL website.
+50% of the training data for the latest release version was generated from historical 40/15 games obtained from the CCRL website.
+
+### Lichess Elite Database
+50% of the training data for the latest release version was generated from games obtained from this database.
 
 ### TCEC (Top Chess Engine Championship)
-Training data for previous test versions was generated from [TCEC](https://tcec-chess.com/) tournament games.
+Training data generated from [TCEC](https://tcec-chess.com/) tournament games was used to train previous versions and as validation dataset for the current training.
 
 ### Chacha20 by Daniel J. Bernstein
-
-Pseudo random number generator is a implementation of Chacha20 algorithm authored by Daniel J. Bernstein.
+The pseudo-random number generator implements the Chacha20 algorithm created by Daniel J. Bernstein.

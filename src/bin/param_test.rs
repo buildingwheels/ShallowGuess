@@ -18,6 +18,12 @@ fn main() -> std::io::Result<()> {
     let epd_file = &args[1];
     let search_time_secs = args[2].parse::<u64>().unwrap();
 
+    let repeat_search_count = if args.len() > 3 {
+        args[3].parse::<u8>().unwrap()
+    } else {
+        1
+    };
+
     let epd_content = fs::read_to_string(&epd_file)?;
 
     thread::Builder::new()
@@ -42,24 +48,28 @@ fn main() -> std::io::Result<()> {
 
                 println!("Testing [{}]", fen);
 
-                let best_move = &search_engine.search_best_move(
-                    &mut chess_position,
-                    Duration::from_secs(search_time_secs),
-                    Duration::from_secs(search_time_secs),
-                    None,
-                    Arc::new(AtomicBool::new(false)),
-                    true,
-                );
+                for repeat_count in 0..repeat_search_count {
+                    println!("Searching iteration {}", repeat_count);
 
-                let best_move_str = format_chess_move(best_move);
+                    let best_move = &search_engine.search_best_move(
+                        &mut chess_position,
+                        Duration::from_secs(search_time_secs),
+                        Duration::from_secs(search_time_secs),
+                        None,
+                        Arc::new(AtomicBool::new(false)),
+                        true,
+                    );
 
-                if best_move_str == expected_best_move {
-                    success_count += 1;
-                    println!("✅");
-                } else {
-                    failure_count += 1;
+                    let best_move_str = format_chess_move(best_move);
 
-                    println!("❌, expected {}, got {}", expected_best_move, best_move_str);
+                    if best_move_str == expected_best_move {
+                        success_count += 1;
+                        println!("✅");
+                    } else {
+                        failure_count += 1;
+
+                        println!("❌, expected {}, got {}", expected_best_move, best_move_str);
+                    }
                 }
 
                 println!(

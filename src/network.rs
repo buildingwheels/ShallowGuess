@@ -4,7 +4,7 @@
 use crate::def::{CHESS_SQUARE_COUNT, TERMINATE_SCORE, WHITE};
 use crate::network_weights::{
     HIDDEN_LAYER_BIASES, HIDDEN_LAYER_SIZE, HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS, INPUT_LAYER_SIZE,
-    INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS, OUTPUT_BIASES, OUTPUT_LAYER_SIZE, SCALING_FACTOR,
+    INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS, OUTPUT_BIAS, SCALING_FACTOR,
 };
 use crate::types::{ChessPiece, ChessSquare, Player, Score};
 use crate::util::{FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
@@ -138,30 +138,8 @@ fn relu(x: NetworkFloatValue) -> NetworkFloatValue {
 }
 
 #[inline(always)]
-fn softmax(
-    logits: &[NetworkFloatValue; OUTPUT_LAYER_SIZE],
-) -> [NetworkFloatValue; OUTPUT_LAYER_SIZE] {
-    let mut max_logit = logits[0];
-    for i in 1..OUTPUT_LAYER_SIZE {
-        if logits[i] > max_logit {
-            max_logit = logits[i];
-        }
-    }
-
-    let mut sum_exp = 0.0;
-    let mut exps = [0.0; OUTPUT_LAYER_SIZE];
-
-    for i in 0..OUTPUT_LAYER_SIZE {
-        exps[i] = (logits[i] - max_logit).exp();
-        sum_exp += exps[i];
-    }
-
-    let mut probs = [0.0; OUTPUT_LAYER_SIZE];
-    for i in 0..OUTPUT_LAYER_SIZE {
-        probs[i] = exps[i] / sum_exp;
-    }
-
-    probs
+fn sigmoid(x: NetworkFloatValue) -> NetworkFloatValue {
+    1.0 / (1.0 + (-x).exp())
 }
 
 pub trait Network: Send + Sync {
@@ -195,9 +173,8 @@ pub struct QuantizedNetwork {
     transposed_input_layer_to_hidden_layer_weights:
         [[NetworkIntValue; HIDDEN_LAYER_SIZE]; INPUT_LAYER_SIZE],
     hidden_layer_biases: [NetworkFloatValue; HIDDEN_LAYER_SIZE],
-    hidden_layer_to_output_layer_weights:
-        [[NetworkFloatValue; HIDDEN_LAYER_SIZE]; OUTPUT_LAYER_SIZE],
-    output_layer_biases: [NetworkFloatValue; OUTPUT_LAYER_SIZE],
+    hidden_layer_to_output_layer_weights: [NetworkFloatValue; HIDDEN_LAYER_SIZE],
+    output_layer_biases: NetworkFloatValue,
 
     scaling_factor: NetworkFloatValue,
 
@@ -211,8 +188,8 @@ impl QuantizedNetwork {
             transposed_input_layer_to_hidden_layer_weights: [[0; HIDDEN_LAYER_SIZE];
                 INPUT_LAYER_SIZE],
             hidden_layer_biases: [0.; HIDDEN_LAYER_SIZE],
-            hidden_layer_to_output_layer_weights: [[0.; HIDDEN_LAYER_SIZE]; OUTPUT_LAYER_SIZE],
-            output_layer_biases: [0.; OUTPUT_LAYER_SIZE],
+            hidden_layer_to_output_layer_weights: [0.; HIDDEN_LAYER_SIZE],
+            output_layer_biases: 0.,
 
             scaling_factor: 0.,
 
@@ -225,46 +202,20 @@ impl QuantizedNetwork {
     }
 
     #[inline(always)]
-    fn evaluate_with_logits(&self, player: Player) -> NetworkFloatValue {
-        let accumulated_layer = if player == WHITE {
-            &self.white_accumulated_layer
-        } else {
-            &self.black_accumulated_layer
-        };
-
-        let mut hidden_layer = [0.; HIDDEN_LAYER_SIZE];
-
-        self.evaluate_hidden_layer(accumulated_layer, &mut hidden_layer);
-
-        let mut logits = [0.0; OUTPUT_LAYER_SIZE];
-
-        for k in 0..OUTPUT_LAYER_SIZE {
-            let mut output = self.output_layer_biases[k];
-            let weights_row = &self.hidden_layer_to_output_layer_weights[k];
-
-            output += self.dot_product(&hidden_layer, weights_row);
-            logits[k] = output;
-        }
-
-        let probs = softmax(&logits);
-        probs[2] + probs[1] * 0.5
-    }
-
-    #[inline(always)]
-    fn evaluate_hidden_layer(
+    fn evaluate_hidden_layer_with_dot_product(
         &self,
         accumulated: &[NetworkIntValue; HIDDEN_LAYER_SIZE],
-        hidden: &mut [NetworkFloatValue; HIDDEN_LAYER_SIZE],
-    ) {
+    ) -> NetworkFloatValue {
         let scaling = SimdF32::splat(self.scaling_factor);
         let zero = SimdF32::splat(0.0);
 
         let chunks = HIDDEN_LAYER_SIZE / SIMD_F32_LANE_WIDTH;
 
+        let mut dot_product_vec = SimdF32::splat(0.0);
+
         for chunk in 0..chunks {
             let base = chunk * SIMD_F32_LANE_WIDTH;
 
-            // Convert i16 accumulated values to f32 for SIMD processing
             let mut acc_f32_arr = [0.0f32; SIMD_F32_LANE_WIDTH];
             for i in 0..SIMD_F32_LANE_WIDTH {
                 acc_f32_arr[i] = accumulated[base + i] as f32;
@@ -273,41 +224,25 @@ impl QuantizedNetwork {
 
             let bias =
                 SimdF32::from_slice(&self.hidden_layer_biases[base..base + SIMD_F32_LANE_WIDTH]);
+            let weights = SimdF32::from_slice(
+                &self.hidden_layer_to_output_layer_weights[base..base + SIMD_F32_LANE_WIDTH],
+            );
 
-            let result = (acc_f32 * scaling + bias).simd_max(zero);
-
-            result.copy_to_slice(&mut hidden[base..base + SIMD_F32_LANE_WIDTH]);
+            let hidden = (acc_f32 * scaling + bias).simd_max(zero);
+            dot_product_vec += hidden * weights;
         }
 
+        let mut dot_product = dot_product_vec.reduce_sum();
+
         for i in (chunks * SIMD_F32_LANE_WIDTH)..HIDDEN_LAYER_SIZE {
-            hidden[i] = relu(
+            let hidden = relu(
                 accumulated[i] as NetworkFloatValue * self.scaling_factor
                     + self.hidden_layer_biases[i],
             );
-        }
-    }
-
-    #[inline(always)]
-    fn dot_product(&self, a: &[NetworkFloatValue], b: &[NetworkFloatValue]) -> NetworkFloatValue {
-        let len = a.len();
-        let chunks = len / SIMD_F32_LANE_WIDTH;
-
-        let mut sum_vec = SimdF32::splat(0.0);
-
-        for chunk in 0..chunks {
-            let base = chunk * SIMD_F32_LANE_WIDTH;
-            let a_vec = SimdF32::from_slice(&a[base..base + SIMD_F32_LANE_WIDTH]);
-            let b_vec = SimdF32::from_slice(&b[base..base + SIMD_F32_LANE_WIDTH]);
-            sum_vec += a_vec * b_vec;
+            dot_product += hidden * self.hidden_layer_to_output_layer_weights[i];
         }
 
-        let mut sum = sum_vec.reduce_sum();
-
-        for i in (chunks * SIMD_F32_LANE_WIDTH)..len {
-            sum += a[i] * b[i];
-        }
-
-        sum
+        dot_product
     }
 
     fn load_un_flatten(
@@ -340,15 +275,10 @@ impl QuantizedNetwork {
         self.hidden_layer_biases
             .copy_from_slice(&hidden_layer_biases);
 
-        for k in 0..OUTPUT_LAYER_SIZE {
-            for i in 0..HIDDEN_LAYER_SIZE {
-                let idx = k * HIDDEN_LAYER_SIZE + i;
-                self.hidden_layer_to_output_layer_weights[k][i] =
-                    flattened_hidden_layer_to_output_layer_weights[idx];
-            }
-        }
+        self.hidden_layer_to_output_layer_weights
+            .copy_from_slice(&flattened_hidden_layer_to_output_layer_weights);
 
-        self.output_layer_biases.copy_from_slice(&output_biases);
+        self.output_layer_biases = output_biases[0];
 
         self.scaling_factor = scaling_factor;
     }
@@ -457,7 +387,17 @@ impl Network for QuantizedNetwork {
     }
 
     fn evaluate(&self, player: Player) -> Score {
-        win_probability_to_centi_pawn_score(self.evaluate_with_logits(player))
+        let accumulated_layer = if player == WHITE {
+            &self.white_accumulated_layer
+        } else {
+            &self.black_accumulated_layer
+        };
+
+        let dot_product = self.evaluate_hidden_layer_with_dot_product(accumulated_layer);
+        let output = self.output_layer_biases + dot_product;
+
+        let win_probability = sigmoid(output);
+        win_probability_to_centi_pawn_score(win_probability)
     }
 }
 
@@ -477,18 +417,13 @@ fn load_default_weights_and_biases(network: &mut QuantizedNetwork) {
         .map(|&x| x as NetworkIntValue)
         .collect();
 
-    let mut flattened_hidden_to_output = Vec::with_capacity(HIDDEN_LAYER_SIZE * OUTPUT_LAYER_SIZE);
-    for i in 0..OUTPUT_LAYER_SIZE {
-        for j in 0..HIDDEN_LAYER_SIZE {
-            flattened_hidden_to_output.push(HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS[i][j]);
-        }
-    }
+    let flattened_hidden_to_output = HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS.to_vec();
 
     network.load_un_flatten(
         input_weights_i16,
         HIDDEN_LAYER_BIASES.to_vec(),
         flattened_hidden_to_output,
-        OUTPUT_BIASES.to_vec(),
+        vec![OUTPUT_BIAS],
         SCALING_FACTOR,
     );
 }

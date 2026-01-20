@@ -14,8 +14,8 @@ use crate::fen::format_chess_move;
 use crate::network::Network;
 use crate::transpos::{HashFlag, TableEntry, TranspositionTable};
 use crate::types::{
-    BitBoard, ChessMove, ChessMoveCount, ChessMoveType, HashKey, MilliSeconds, NodeCount, Player,
-    Score, SearchDepth, SearchPly, SortableChessMove, EMPTY_CHESS_MOVE,
+    BitBoard, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, HashKey, MilliSeconds,
+    NodeCount, Player, Score, SearchDepth, SearchPly, SortableChessMove, EMPTY_CHESS_MOVE,
 };
 use crate::uci::print_info;
 use crate::util::u16_sqrt;
@@ -28,11 +28,13 @@ use std::time::{Duration, Instant};
 struct TwoBucketMoveTableEntry {
     pub primary: ChessMove,
     pub secondary: ChessMove,
+    pub primary_depth: SearchDepth,
 }
 
 const EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY: TwoBucketMoveTableEntry = TwoBucketMoveTableEntry {
     primary: EMPTY_CHESS_MOVE,
     secondary: EMPTY_CHESS_MOVE,
+    primary_depth: 0,
 };
 
 type HistoryTable = [[Score; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
@@ -49,18 +51,16 @@ type NodeType = i8;
 const NODE_TYPE_PV: NodeType = 0;
 const NODE_TYPE_NON_PV: NodeType = 1;
 
-const ASPIRATION_WINDOW_WIDTH_NORMAL: Score = 20;
+const ASPIRATION_WINDOW_WIDTH_NORMAL: Score = 10;
 const ASPIRATION_WINDOW_WIDTH_VOLATILE: Score = 50;
 
 const VOLATILE_POS_THRESHOLD: Score = 100;
-
-const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 6;
-const NULL_MOVE_PRUNING_DEPTH_REDUCTION: SearchDepth = 2;
 
 const HISTORY_DECAY_THRESHOLD: Score = 1024 * 1024;
 
 const MAX_DEPTH: SearchDepth = 128;
 const MAX_PV_LENGTH: usize = 128;
+const MAX_SEARCH_TIME_MILLIS: MilliSeconds = 3600;
 
 const SORT_PRIORITY_KILLER: Score = 2;
 const SORT_PRIORITY_COUNTER_FOLLOWUP: Score = 1;
@@ -68,6 +68,13 @@ const SORT_PRIORITY_OTHER: Score = 0;
 
 const HISTORY_WEIGHT_SHIFT_COUNTER: usize = 2;
 const HISTORY_WEIGHT_SHIFT_FOLLOWUP: usize = 1;
+const DISTANT_HISTORY_WEIGHT_SHIFT: usize = 2;
+
+const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 3;
+
+const STATIC_PRUNING_MARGIN: Score = 700;
+
+const ENDGAME_PIECE_COUNT: ChessPieceCount = 6;
 
 pub struct SearchInfo {
     pub score: Score,
@@ -81,17 +88,21 @@ pub struct SearchInfo {
 pub struct SearchEngine {
     transposition_table: TranspositionTable,
 
-    counter_move_table: CounterMoveTable,
-    followup_move_table: FollowupMoveTable,
     killer_table: KillerTable,
+
+    quiet_counter_move_table: CounterMoveTable,
+    quiet_followup_move_table: FollowupMoveTable,
+
+    non_quiet_counter_move_table: CounterMoveTable,
+    non_quiet_followup_move_table: FollowupMoveTable,
 
     main_history_table: HistoryTable,
     continuation_history_table: ContinuationHistoryTable,
 
     searched_move_count: ChessMoveCount,
-    searched_node_count: NodeCount,
+    searched_or_pruned_node_count: NodeCount,
     selected_depth: SearchPly,
-    search_start_full_move_count: ChessMoveCount,
+    search_iteration_counter: ChessMoveCount,
     search_start_time: Instant,
     allowed_search_time: Duration,
     allowed_max_depth: SearchDepth,
@@ -105,9 +116,15 @@ impl SearchEngine {
             transposition_table,
 
             killer_table: [[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; MAX_PV_LENGTH]; PLAYER_COUNT],
-            counter_move_table: [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
+
+            quiet_counter_move_table: [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
                 CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT],
-            followup_move_table: [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
+            quiet_followup_move_table: [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
+                CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT],
+
+            non_quiet_counter_move_table: [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
+                CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT],
+            non_quiet_followup_move_table: [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
                 CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT],
 
             main_history_table: [[0; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT],
@@ -115,13 +132,13 @@ impl SearchEngine {
                 CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT],
 
             searched_move_count: 0,
-            searched_node_count: 0,
+            searched_or_pruned_node_count: 0,
             selected_depth: 0,
 
             search_start_time: Instant::now(),
             allowed_search_time: Duration::from_millis(0),
             allowed_max_depth: MAX_DEPTH,
-            search_start_full_move_count: 0,
+            search_iteration_counter: 0,
 
             aborted: false,
             force_stopped: Arc::new(AtomicBool::new(false)),
@@ -130,7 +147,25 @@ impl SearchEngine {
 
     pub fn reset_game(&mut self) {
         self.searched_move_count = 0;
+        self.force_stopped = Arc::new(AtomicBool::new(false));
+        self.aborted = false;
+
         self.transposition_table.clear();
+
+        self.quiet_counter_move_table = [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
+            CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
+        self.quiet_followup_move_table = [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
+            CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
+        self.non_quiet_counter_move_table = [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY;
+            CHESS_SQUARE_COUNT]; CHESS_SQUARE_COUNT];
+            PIECE_TYPE_COUNT];
+        self.non_quiet_followup_move_table = [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY;
+            CHESS_SQUARE_COUNT]; CHESS_SQUARE_COUNT];
+            PIECE_TYPE_COUNT];
+        self.killer_table = [[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; MAX_PV_LENGTH]; PLAYER_COUNT];
+        self.main_history_table = [[0; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
+        self.continuation_history_table =
+            [[[[0; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT]; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
     }
 
     pub fn set_hash_size(&mut self, hash_size: usize) {
@@ -149,23 +184,17 @@ impl SearchEngine {
         self.search_start_time = Instant::now();
         self.allowed_search_time = allowed_time;
         self.force_stopped = force_stopped;
-        self.search_start_full_move_count = chess_position.full_move_count;
+        self.search_iteration_counter = self.search_iteration_counter.wrapping_add(1);
 
-        self.searched_node_count = 0;
+        self.searched_or_pruned_node_count = 0;
         self.selected_depth = 0;
         self.aborted = false;
 
         self.killer_table = [[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; MAX_PV_LENGTH]; PLAYER_COUNT];
-        self.counter_move_table = [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
-            CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
-        self.followup_move_table = [[[EMPTY_TWO_BUCKET_MOVE_TABLE_ENTRY; CHESS_SQUARE_COUNT];
-            CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
 
         self.main_history_table = [[0; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
         self.continuation_history_table =
             [[[[0; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT]; CHESS_SQUARE_COUNT]; PIECE_TYPE_COUNT];
-
-        chess_position.clear_hash_key_history_per_search();
 
         let soft_stop_time = allowed_time / 2;
 
@@ -186,18 +215,18 @@ impl SearchEngine {
         }
 
         let mut best_move = EMPTY_CHESS_MOVE;
-
         let mut depth = 1;
         let mut previous_score = 0;
-        let mut searching_full_window: bool = false;
+        let mut searching_extended_window = false;
+        let mut searching_full_window = false;
         let mut is_volatile_position = false;
-        let mut used_extra_time = self.searched_move_count == 0;
+        let mut used_extra_time = false;
 
         loop {
             let (alpha, beta) = if searching_full_window || depth == 1 {
                 (-MATE_SCORE, MATE_SCORE)
             } else {
-                if is_volatile_position {
+                if is_volatile_position || searching_extended_window {
                     (
                         previous_score - ASPIRATION_WINDOW_WIDTH_VOLATILE,
                         previous_score + ASPIRATION_WINDOW_WIDTH_VOLATILE,
@@ -224,45 +253,52 @@ impl SearchEngine {
                 break;
             }
 
+            if score <= alpha || score >= beta {
+                if searching_extended_window {
+                    searching_full_window = true;
+                } else {
+                    searching_extended_window = true;
+                }
+
+                continue;
+            }
+
             let mut principal_variation = Vec::new();
+
             self.retrieve_principal_variation(
                 chess_position,
                 &mut principal_variation,
                 depth as usize,
             );
 
-            let mut current_move = EMPTY_CHESS_MOVE;
-
-            if !principal_variation.is_empty() {
-                current_move = principal_variation[0];
-            }
-
-            if !used_extra_time
-                && current_move != best_move
-                && self.search_start_time.elapsed() > soft_stop_time
-            {
-                self.allowed_search_time += extra_allowed_time;
-                used_extra_time = true;
+            if principal_variation.is_empty() {
+                self.transposition_table.clear();
+                continue;
             }
 
             if show_output {
                 self.print_search_info(score, depth, &principal_variation);
             }
 
-            if score <= alpha || score >= beta {
-                searching_full_window = true;
-                continue;
+            let current_best_move = principal_variation[0];
+
+            if !used_extra_time {
+                if self.searched_move_count == 0
+                    || (current_best_move != best_move
+                        && self.search_start_time.elapsed() > soft_stop_time)
+                {
+                    self.allowed_search_time += extra_allowed_time;
+                    used_extra_time = true;
+                }
             }
 
-            if !current_move.is_empty() {
-                best_move = current_move;
-            }
+            best_move = current_best_move;
 
             if score > TERMINATE_SCORE || score < -TERMINATE_SCORE {
                 break;
             }
 
-            if self.search_start_time.elapsed() >= soft_stop_time {
+            if !used_extra_time && self.search_start_time.elapsed() >= soft_stop_time {
                 break;
             }
 
@@ -274,12 +310,32 @@ impl SearchEngine {
 
             depth += 1;
             previous_score = score;
+            searching_extended_window = false;
             searching_full_window = false;
         }
 
         self.searched_move_count += 1;
 
         best_move
+    }
+
+    pub fn search_to_depth<N: Network>(
+        &mut self,
+        chess_position: &mut ChessPosition<N>,
+        depth: SearchDepth,
+    ) -> Score {
+        self.search_start_time = Instant::now();
+        self.allowed_search_time = Duration::from_millis(MAX_SEARCH_TIME_MILLIS);
+
+        self.ab_search(
+            chess_position,
+            -MATE_SCORE,
+            MATE_SCORE,
+            NODE_TYPE_PV,
+            is_in_check(chess_position),
+            depth,
+            0,
+        )
     }
 
     fn ab_search<N: Network>(
@@ -303,10 +359,29 @@ impl SearchEngine {
             return alpha;
         }
 
-        self.searched_node_count += 1;
+        self.searched_or_pruned_node_count += 1;
 
-        if chess_position.is_draw() {
-            return DRAW_SCORE;
+        let safety_check = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
+        let age = self.search_iteration_counter;
+
+        if ply > 0 {
+            if chess_position.is_material_draw() {
+                self.update_hash(&TableEntry {
+                    key: chess_position.hash_key,
+                    safety_check,
+                    score: DRAW_SCORE,
+                    depth: MAX_DEPTH,
+                    age,
+                    flag: HashFlag::Exact,
+                    chess_move: EMPTY_CHESS_MOVE,
+                });
+
+                return DRAW_SCORE;
+            }
+
+            if chess_position.is_repetition_draw() {
+                return DRAW_SCORE;
+            }
         }
 
         if depth == 0 {
@@ -317,17 +392,14 @@ impl SearchEngine {
             }
         }
 
-        let original_alpha = alpha;
         let on_pv = node_type == NODE_TYPE_PV;
-        let safety_check = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
-        let age = self.search_start_full_move_count;
 
         let hash_move;
 
         if let Some(entry) = self.lookup_hash(chess_position.hash_key, safety_check) {
             hash_move = entry.chess_move;
 
-            if !on_pv && entry.depth >= depth {
+            if !on_pv && entry.depth >= depth && entry.score != DRAW_SCORE {
                 match entry.flag {
                     HashFlag::LowBound => {
                         if entry.score >= beta {
@@ -356,17 +428,39 @@ impl SearchEngine {
             hash_move = EMPTY_CHESS_MOVE;
         }
 
-        let is_pawn_endgame = chess_position.is_pawn_endgame();
+        if !on_pv
+            && !in_check
+            && beta < TERMINATE_SCORE
+            && depth == 1
+            && chess_position.get_piece_count() > ENDGAME_PIECE_COUNT
+        {
+            let static_pruning_score = chess_position.get_static_score() - STATIC_PRUNING_MARGIN;
+
+            if static_pruning_score >= beta {
+                self.update_hash(&TableEntry {
+                    key: chess_position.hash_key,
+                    safety_check,
+                    score: static_pruning_score,
+                    depth,
+                    age,
+                    flag: HashFlag::LowBound,
+                    chess_move: EMPTY_CHESS_MOVE,
+                });
+
+                return static_pruning_score;
+            }
+        }
 
         let mut under_mate_threat = false;
 
         if !on_pv
             && !in_check
-            && !is_pawn_endgame
             && beta < TERMINATE_SCORE
             && depth >= NULL_MOVE_PRUNING_MIN_DEPTH
             && chess_position.get_static_score() >= beta
         {
+            let depth_reduction = u16_sqrt(depth << 1) - 1;
+
             let saved_enpassant_square = chess_position.make_null_move();
 
             let scout_score = -self.ab_search(
@@ -375,38 +469,56 @@ impl SearchEngine {
                 1 - beta,
                 node_type,
                 false,
-                depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION - 1,
+                depth - depth_reduction - 1,
                 ply + 1,
             );
 
             chess_position.unmake_null_move(saved_enpassant_square);
 
-            if self.aborted {
-                return alpha;
-            }
-
             if scout_score >= beta && scout_score != DRAW_SCORE {
+                if chess_position.get_piece_count() > ENDGAME_PIECE_COUNT {
+                    self.update_hash(&TableEntry {
+                        key: chess_position.hash_key,
+                        safety_check,
+                        score: scout_score,
+                        depth,
+                        age,
+                        flag: HashFlag::LowBound,
+                        chess_move: EMPTY_CHESS_MOVE,
+                    });
+
+                    return scout_score;
+                }
+
                 let verification_score = self.ab_search(
                     chess_position,
                     beta - 1,
                     beta,
                     node_type,
                     false,
-                    depth - NULL_MOVE_PRUNING_DEPTH_REDUCTION,
+                    depth - depth_reduction,
                     ply,
                 );
 
-                if self.aborted {
-                    return alpha;
-                }
+                if verification_score >= beta {
+                    self.update_hash(&TableEntry {
+                        key: chess_position.hash_key,
+                        safety_check,
+                        score: verification_score,
+                        depth,
+                        age,
+                        flag: HashFlag::LowBound,
+                        chess_move: EMPTY_CHESS_MOVE,
+                    });
 
-                if verification_score >= beta && verification_score != DRAW_SCORE {
                     return verification_score;
                 }
             } else if scout_score <= -TERMINATE_SCORE {
                 under_mate_threat = true;
             }
         }
+
+        let original_alpha = alpha;
 
         let mut valid_move_count = 0;
 
@@ -447,10 +559,13 @@ impl SearchEngine {
                 });
 
                 if is_quiet_chess_move {
-                    self.update_killer_move(hash_move, chess_position.player, ply);
-                    self.update_counter_move(hash_move, chess_position);
-                    self.update_followup_move(hash_move, chess_position);
+                    self.update_killer_move(hash_move, chess_position.player, ply, depth);
+                    self.update_quiet_counter_move(hash_move, chess_position, depth);
+                    self.update_quiet_followup_move(hash_move, chess_position, depth);
                     self.update_history(&hash_move, chess_position, depth, None);
+                } else {
+                    self.update_non_quiet_counter_move(hash_move, chess_position, depth);
+                    self.update_non_quiet_followup_move(hash_move, chess_position, depth);
                 }
 
                 return score;
@@ -462,6 +577,12 @@ impl SearchEngine {
 
                 if score > alpha {
                     alpha = score;
+
+                    if is_quiet_chess_move {
+                        self.update_quiet_followup_move(hash_move, chess_position, depth);
+                    } else {
+                        self.update_non_quiet_followup_move(hash_move, chess_position, depth);
+                    }
                 }
             }
         }
@@ -542,6 +663,9 @@ impl SearchEngine {
                     chess_move,
                 });
 
+                self.update_non_quiet_counter_move(chess_move, chess_position, depth);
+                self.update_non_quiet_followup_move(chess_move, chess_position, depth);
+
                 return score;
             }
 
@@ -551,6 +675,8 @@ impl SearchEngine {
 
                 if score > alpha {
                     alpha = score;
+
+                    self.update_non_quiet_followup_move(chess_move, chess_position, depth);
                 }
             }
         }
@@ -561,7 +687,8 @@ impl SearchEngine {
             ply,
         );
 
-        let mut searched_quiet_chess_moves = Vec::with_capacity(quiet_chess_moves.len());
+        let mut valid_quiet_move_count = 0;
+        let mut searched_quiet_chess_moves = Vec::new();
 
         while let Some(sortable_chess_move) = quiet_chess_moves.pop() {
             let chess_move = sortable_chess_move.chess_move;
@@ -578,6 +705,7 @@ impl SearchEngine {
             }
 
             valid_move_count += 1;
+            valid_quiet_move_count += 1;
 
             let gives_check = is_in_check(chess_position);
 
@@ -594,14 +722,22 @@ impl SearchEngine {
                     ply + 1,
                 );
             } else {
-                let depth_reduction = if !in_check
-                    && !gives_check
-                    && !under_mate_threat
-                    && !is_pawn_endgame
-                    && depth > 2
-                    && sortable_chess_move.priority == SORT_PRIORITY_OTHER
-                {
-                    u16_sqrt(depth << 1) - 1
+                let depth_reduction = if ply > 0 && !in_check && !under_mate_threat && depth > 1 {
+                    if gives_check {
+                        if sortable_chess_move.sort_score < 0 {
+                            1
+                        } else {
+                            0
+                        }
+                    } else {
+                        let mut reduction = u16_sqrt(depth + valid_quiet_move_count);
+
+                        if on_pv {
+                            reduction -= 1;
+                        }
+
+                        reduction.min(depth - 1)
+                    }
                 } else {
                     0
                 };
@@ -658,9 +794,9 @@ impl SearchEngine {
                     chess_move,
                 });
 
-                self.update_killer_move(chess_move, chess_position.player, ply);
-                self.update_counter_move(chess_move, chess_position);
-                self.update_followup_move(chess_move, chess_position);
+                self.update_killer_move(chess_move, chess_position.player, ply, depth);
+                self.update_quiet_counter_move(chess_move, chess_position, depth);
+                self.update_quiet_followup_move(chess_move, chess_position, depth);
                 self.update_history(
                     &chess_move,
                     chess_position,
@@ -677,6 +813,8 @@ impl SearchEngine {
 
                 if score > alpha {
                     alpha = score;
+
+                    self.update_quiet_followup_move(chess_move, chess_position, depth);
                 }
             }
 
@@ -684,11 +822,23 @@ impl SearchEngine {
         }
 
         if valid_move_count == 0 {
-            return if in_check {
+            let terminate_score = if in_check {
                 -MATE_SCORE + ply as Score
             } else {
                 DRAW_SCORE
             };
+
+            self.update_hash(&TableEntry {
+                key: chess_position.hash_key,
+                safety_check,
+                score: terminate_score,
+                depth,
+                age,
+                flag: HashFlag::Exact,
+                chess_move: EMPTY_CHESS_MOVE,
+            });
+
+            return terminate_score;
         }
 
         if alpha == original_alpha {
@@ -699,13 +849,13 @@ impl SearchEngine {
                 depth,
                 age,
                 flag: HashFlag::HighBound,
-                chess_move: best_move,
+                chess_move: EMPTY_CHESS_MOVE,
             });
         } else {
             self.update_hash(&TableEntry {
                 key: chess_position.hash_key,
                 safety_check,
-                score: alpha,
+                score: best_score,
                 depth,
                 age,
                 flag: HashFlag::Exact,
@@ -733,16 +883,30 @@ impl SearchEngine {
             return alpha;
         }
 
-        self.searched_node_count += 1;
+        self.searched_or_pruned_node_count += 1;
 
         if ply > self.selected_depth {
             self.selected_depth = ply;
         }
 
-        let on_pv = node_type == NODE_TYPE_PV;
-        let original_alpha = alpha;
         let safety_check = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
-        let age = self.search_start_full_move_count;
+        let age = self.search_iteration_counter;
+
+        if chess_position.is_material_draw() {
+            self.update_hash(&TableEntry {
+                key: chess_position.hash_key,
+                safety_check,
+                score: DRAW_SCORE,
+                depth: MAX_DEPTH,
+                age,
+                flag: HashFlag::Exact,
+                chess_move: EMPTY_CHESS_MOVE,
+            });
+
+            return DRAW_SCORE;
+        }
+
+        let on_pv = node_type == NODE_TYPE_PV;
 
         let hash_move;
 
@@ -753,7 +917,7 @@ impl SearchEngine {
                 hash_move = EMPTY_CHESS_MOVE;
             }
 
-            if !on_pv {
+            if !on_pv && entry.score != DRAW_SCORE {
                 match entry.flag {
                     HashFlag::LowBound => {
                         if entry.score >= beta {
@@ -782,6 +946,8 @@ impl SearchEngine {
             hash_move = EMPTY_CHESS_MOVE;
         }
 
+        let original_alpha = alpha;
+
         let mut best_score = chess_position.get_static_score();
 
         if best_score >= beta {
@@ -803,11 +969,18 @@ impl SearchEngine {
         }
 
         let mut best_move = EMPTY_CHESS_MOVE;
+        let mut valid_move_count = 0;
 
         if !hash_move.is_empty() {
+            valid_move_count += 1;
+
             let saved_state = chess_position.make_move(&hash_move);
 
-            let score = -self.q_search(chess_position, -beta, -alpha, node_type, ply + 1);
+            let score = if is_in_check(chess_position) {
+                -self.ab_search(chess_position, -beta, -alpha, node_type, true, 1, ply + 1)
+            } else {
+                -self.q_search(chess_position, -beta, -alpha, node_type, ply + 1)
+            };
 
             chess_position.unmake_move(&hash_move, saved_state);
 
@@ -858,10 +1031,54 @@ impl SearchEngine {
                 continue;
             }
 
-            let score = if is_in_check(chess_position) {
-                -self.ab_search(chess_position, -beta, -alpha, node_type, true, 1, ply + 1)
+            let gives_check = is_in_check(chess_position);
+
+            if !on_pv && !gives_check && sortable_chess_move.sort_score < 0 {
+                self.searched_or_pruned_node_count += 1;
+                chess_position.unmake_move(&chess_move, saved_state);
+                continue;
+            }
+
+            valid_move_count += 1;
+
+            let score = if gives_check {
+                if valid_move_count == 1 {
+                    -self.ab_search(chess_position, -beta, -alpha, node_type, true, 1, ply + 1)
+                } else {
+                    let score = -self.ab_search(
+                        chess_position,
+                        -alpha - 1,
+                        -alpha,
+                        NODE_TYPE_NON_PV,
+                        true,
+                        1,
+                        ply + 1,
+                    );
+
+                    if score > alpha && score < beta {
+                        -self.ab_search(chess_position, -beta, -alpha, node_type, true, 1, ply + 1)
+                    } else {
+                        score
+                    }
+                }
             } else {
-                -self.q_search(chess_position, -beta, -alpha, node_type, ply + 1)
+                if valid_move_count == 1 {
+                    -self.q_search(chess_position, -beta, -alpha, node_type, ply + 1)
+                } else {
+                    let score = -self.q_search(
+                        chess_position,
+                        -alpha - 1,
+                        -alpha,
+                        NODE_TYPE_NON_PV,
+                        ply + 1,
+                    );
+
+                    if score > alpha && score < beta {
+                        -self.q_search(chess_position, -beta, -alpha, node_type, ply + 1)
+                    } else {
+                        score
+                    }
+                }
             };
 
             chess_position.unmake_move(&chess_move, saved_state);
@@ -881,6 +1098,9 @@ impl SearchEngine {
                     chess_move,
                 });
 
+                self.update_non_quiet_counter_move(chess_move, chess_position, 0);
+                self.update_non_quiet_followup_move(chess_move, chess_position, 0);
+
                 return score;
             }
 
@@ -890,6 +1110,8 @@ impl SearchEngine {
 
                 if score > alpha {
                     alpha = score;
+
+                    self.update_non_quiet_followup_move(chess_move, chess_position, 0);
                 }
             }
         }
@@ -902,13 +1124,13 @@ impl SearchEngine {
                 depth: 0,
                 age,
                 flag: HashFlag::HighBound,
-                chess_move: best_move,
+                chess_move: EMPTY_CHESS_MOVE,
             });
         } else {
             self.update_hash(&TableEntry {
                 key: chess_position.hash_key,
                 safety_check,
-                score: alpha,
+                score: best_score,
                 depth: 0,
                 age,
                 flag: HashFlag::Exact,
@@ -919,6 +1141,7 @@ impl SearchEngine {
         best_score
     }
 
+    #[inline(always)]
     fn sort_captures_and_promotions<N: Network>(
         &self,
         chess_position: &mut ChessPosition<N>,
@@ -926,8 +1149,28 @@ impl SearchEngine {
     ) -> BinaryHeap<SortableChessMove> {
         let mut sorted_moves = BinaryHeap::with_capacity(chess_moves.len());
 
+        let (primary_counter_move, secondary_counter_move) =
+            self.get_non_quiet_counter_move(chess_position);
+
+        let (primary_followup_move, secondary_followup_move) =
+            self.get_non_quiet_followup_move(chess_position);
+
         for chess_move in chess_moves {
             let mvv_lva_score = get_mvv_lva_score(&chess_move, chess_position);
+
+            if chess_move == primary_counter_move
+                || chess_move == secondary_counter_move
+                || chess_move == primary_followup_move
+                || chess_move == secondary_followup_move
+            {
+                sorted_moves.push(SortableChessMove {
+                    chess_move,
+                    sort_score: mvv_lva_score,
+                    priority: SORT_PRIORITY_COUNTER_FOLLOWUP,
+                });
+
+                continue;
+            }
 
             if mvv_lva_score > 0 {
                 sorted_moves.push(SortableChessMove {
@@ -947,6 +1190,7 @@ impl SearchEngine {
         sorted_moves
     }
 
+    #[inline(always)]
     fn sort_quiet_moves<N: Network>(
         &self,
         chess_position: &mut ChessPosition<N>,
@@ -958,16 +1202,18 @@ impl SearchEngine {
         let (primary_killer_current_ply, secondary_killer_current_ply) =
             self.get_killer_moves(chess_position.player, ply);
 
-        let (primary_to_counter_move, secondary_to_counter_move) =
-            self.get_counter_move(chess_position);
+        let (primary_counter_move, secondary_counter_move) =
+            self.get_quiet_counter_move(chess_position);
 
-        let (primary_to_followup_move, secondary_to_followup_move) =
-            self.get_followup_move(chess_position);
+        let (primary_followup_move, secondary_followup_move) =
+            self.get_quiet_followup_move(chess_position);
 
         for chess_move in chess_moves {
             let history_score = self.get_history(&chess_move, chess_position);
 
-            if chess_move == primary_killer_current_ply {
+            if chess_move == primary_killer_current_ply
+                || chess_move == secondary_killer_current_ply
+            {
                 sorted_moves.push(SortableChessMove {
                     chess_move,
                     sort_score: history_score,
@@ -977,47 +1223,11 @@ impl SearchEngine {
                 continue;
             }
 
-            if chess_move == secondary_killer_current_ply {
-                sorted_moves.push(SortableChessMove {
-                    chess_move,
-                    sort_score: history_score,
-                    priority: SORT_PRIORITY_KILLER,
-                });
-
-                continue;
-            }
-
-            if chess_move == primary_to_counter_move {
-                sorted_moves.push(SortableChessMove {
-                    chess_move,
-                    sort_score: history_score,
-                    priority: SORT_PRIORITY_COUNTER_FOLLOWUP,
-                });
-
-                continue;
-            }
-
-            if chess_move == secondary_to_counter_move {
-                sorted_moves.push(SortableChessMove {
-                    chess_move,
-                    sort_score: history_score,
-                    priority: SORT_PRIORITY_COUNTER_FOLLOWUP,
-                });
-
-                continue;
-            }
-
-            if chess_move == primary_to_followup_move {
-                sorted_moves.push(SortableChessMove {
-                    chess_move,
-                    sort_score: history_score,
-                    priority: SORT_PRIORITY_COUNTER_FOLLOWUP,
-                });
-
-                continue;
-            }
-
-            if chess_move == secondary_to_followup_move {
+            if chess_move == primary_counter_move
+                || chess_move == secondary_counter_move
+                || chess_move == primary_followup_move
+                || chess_move == secondary_followup_move
+            {
                 sorted_moves.push(SortableChessMove {
                     chess_move,
                     sort_score: history_score,
@@ -1124,7 +1334,7 @@ impl SearchEngine {
             safety_check,
             score: chess_move_count as Score,
             depth,
-            age: self.search_start_full_move_count,
+            age: self.search_iteration_counter,
             flag: HashFlag::Exact,
             chess_move: EMPTY_CHESS_MOVE,
         });
@@ -1142,10 +1352,18 @@ impl SearchEngine {
             return;
         }
 
+        if !principal_variation.is_empty() && chess_position.is_repetition_draw() {
+            return;
+        }
+
         if let Some(entry) = self.lookup_hash(
             chess_position.hash_key,
             chess_position.white_all_bitboard | chess_position.black_all_bitboard,
         ) {
+            if entry.flag != HashFlag::Exact && !principal_variation.is_empty() {
+                return;
+            }
+
             let chess_move = entry.chess_move;
 
             if !chess_move.is_empty() {
@@ -1169,66 +1387,6 @@ impl SearchEngine {
     }
 
     #[inline(always)]
-    fn get_counter_move<N: Network>(
-        &self,
-        chess_position: &ChessPosition<N>,
-    ) -> (ChessMove, ChessMove) {
-        if let Some(last_move) = chess_position.get_last_move() {
-            let entry = &self.counter_move_table[last_move.chess_piece as usize]
-                [last_move.from_square][last_move.to_square];
-
-            (entry.primary, entry.secondary)
-        } else {
-            (EMPTY_CHESS_MOVE, EMPTY_CHESS_MOVE)
-        }
-    }
-
-    #[inline(always)]
-    fn update_counter_move<N: Network>(
-        &mut self,
-        chess_move: ChessMove,
-        chess_position: &ChessPosition<N>,
-    ) {
-        if let Some(last_move) = chess_position.get_last_move() {
-            let entry = &mut self.counter_move_table[last_move.chess_piece as usize]
-                [last_move.from_square][last_move.to_square];
-
-            entry.secondary = entry.primary;
-            entry.primary = chess_move;
-        }
-    }
-
-    #[inline(always)]
-    fn get_followup_move<N: Network>(
-        &self,
-        chess_position: &ChessPosition<N>,
-    ) -> (ChessMove, ChessMove) {
-        if let Some(last_move) = chess_position.get_second_last_move() {
-            let entry = &self.followup_move_table[last_move.chess_piece as usize]
-                [last_move.from_square][last_move.to_square];
-
-            (entry.primary, entry.secondary)
-        } else {
-            (EMPTY_CHESS_MOVE, EMPTY_CHESS_MOVE)
-        }
-    }
-
-    #[inline(always)]
-    fn update_followup_move<N: Network>(
-        &mut self,
-        chess_move: ChessMove,
-        chess_position: &ChessPosition<N>,
-    ) {
-        if let Some(last_move) = chess_position.get_second_last_move() {
-            let entry = &mut self.followup_move_table[last_move.chess_piece as usize]
-                [last_move.from_square][last_move.to_square];
-
-            entry.secondary = entry.primary;
-            entry.primary = chess_move;
-        }
-    }
-
-    #[inline(always)]
     fn get_killer_moves(&self, player: Player, ply: SearchPly) -> (ChessMove, ChessMove) {
         if ply < MAX_PV_LENGTH {
             let entry = self.killer_table[player as usize][ply];
@@ -1239,12 +1397,167 @@ impl SearchEngine {
     }
 
     #[inline(always)]
-    fn update_killer_move(&mut self, chess_move: ChessMove, player: Player, ply: SearchPly) {
+    fn update_killer_move(
+        &mut self,
+        chess_move: ChessMove,
+        player: Player,
+        ply: SearchPly,
+        depth: SearchDepth,
+    ) {
         if ply < MAX_PV_LENGTH {
             let entry = &mut self.killer_table[player as usize][ply];
 
-            entry.secondary = entry.primary;
-            entry.primary = chess_move;
+            if depth >= entry.primary_depth {
+                entry.secondary = entry.primary;
+                entry.primary = chess_move;
+                entry.primary_depth = depth;
+            } else {
+                entry.secondary = chess_move;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn get_quiet_counter_move<N: Network>(
+        &self,
+        chess_position: &ChessPosition<N>,
+    ) -> (ChessMove, ChessMove) {
+        if let Some(last_move) = chess_position.get_last_move_from_opponent() {
+            let entry = &self.quiet_counter_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            (entry.primary, entry.secondary)
+        } else {
+            (EMPTY_CHESS_MOVE, EMPTY_CHESS_MOVE)
+        }
+    }
+
+    #[inline(always)]
+    fn update_quiet_counter_move<N: Network>(
+        &mut self,
+        chess_move: ChessMove,
+        chess_position: &ChessPosition<N>,
+        depth: SearchDepth,
+    ) {
+        if let Some(last_move) = chess_position.get_last_move_from_opponent() {
+            let entry = &mut self.quiet_counter_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            if depth >= entry.primary_depth {
+                entry.secondary = entry.primary;
+                entry.primary = chess_move;
+                entry.primary_depth = depth;
+            } else {
+                entry.secondary = chess_move;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn get_quiet_followup_move<N: Network>(
+        &self,
+        chess_position: &ChessPosition<N>,
+    ) -> (ChessMove, ChessMove) {
+        if let Some(last_move) = chess_position.get_last_move_from_current_player() {
+            let entry = &self.quiet_followup_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            (entry.primary, entry.secondary)
+        } else {
+            (EMPTY_CHESS_MOVE, EMPTY_CHESS_MOVE)
+        }
+    }
+
+    #[inline(always)]
+    fn update_quiet_followup_move<N: Network>(
+        &mut self,
+        chess_move: ChessMove,
+        chess_position: &ChessPosition<N>,
+        depth: SearchDepth,
+    ) {
+        if let Some(last_move) = chess_position.get_last_move_from_current_player() {
+            let entry = &mut self.quiet_followup_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            if depth >= entry.primary_depth {
+                entry.secondary = entry.primary;
+                entry.primary = chess_move;
+                entry.primary_depth = depth;
+            } else {
+                entry.secondary = chess_move;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn get_non_quiet_counter_move<N: Network>(
+        &self,
+        chess_position: &ChessPosition<N>,
+    ) -> (ChessMove, ChessMove) {
+        if let Some(last_move) = chess_position.get_last_move_from_opponent() {
+            let entry = &self.non_quiet_counter_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            (entry.primary, entry.secondary)
+        } else {
+            (EMPTY_CHESS_MOVE, EMPTY_CHESS_MOVE)
+        }
+    }
+
+    #[inline(always)]
+    fn update_non_quiet_counter_move<N: Network>(
+        &mut self,
+        chess_move: ChessMove,
+        chess_position: &ChessPosition<N>,
+        depth: SearchDepth,
+    ) {
+        if let Some(last_move) = chess_position.get_last_move_from_opponent() {
+            let entry = &mut self.non_quiet_counter_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            if depth >= entry.primary_depth {
+                entry.secondary = entry.primary;
+                entry.primary = chess_move;
+                entry.primary_depth = depth;
+            } else {
+                entry.secondary = chess_move;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn get_non_quiet_followup_move<N: Network>(
+        &self,
+        chess_position: &ChessPosition<N>,
+    ) -> (ChessMove, ChessMove) {
+        if let Some(last_move) = chess_position.get_last_move_from_current_player() {
+            let entry = &self.non_quiet_followup_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            (entry.primary, entry.secondary)
+        } else {
+            (EMPTY_CHESS_MOVE, EMPTY_CHESS_MOVE)
+        }
+    }
+
+    #[inline(always)]
+    fn update_non_quiet_followup_move<N: Network>(
+        &mut self,
+        chess_move: ChessMove,
+        chess_position: &ChessPosition<N>,
+        depth: SearchDepth,
+    ) {
+        if let Some(last_move) = chess_position.get_last_move_from_current_player() {
+            let entry = &mut self.non_quiet_followup_move_table[last_move.chess_piece as usize]
+                [last_move.from_square][last_move.to_square];
+
+            if depth >= entry.primary_depth {
+                entry.secondary = entry.primary;
+                entry.primary = chess_move;
+                entry.primary_depth = depth;
+            } else {
+                entry.secondary = chess_move;
+            }
         }
     }
 
@@ -1257,21 +1570,52 @@ impl SearchEngine {
         let moving_piece = chess_position.board[chess_move.from_square] as usize;
         let history_score = self.main_history_table[moving_piece][chess_move.to_square];
 
-        if let Some(last_move) = chess_position.get_last_move() {
+        if let Some(last_move_from_opponent) = chess_position.get_last_move_from_opponent() {
             let counter_history_score = self.continuation_history_table
-                [last_move.chess_piece as usize][last_move.to_square][moving_piece]
-                [chess_move.to_square];
+                [last_move_from_opponent.chess_piece as usize][last_move_from_opponent.to_square]
+                [moving_piece][chess_move.to_square];
 
-            if let Some(second_last_move) = chess_position.get_second_last_move() {
+            if let Some(last_move_from_current_player) =
+                chess_position.get_last_move_from_current_player()
+            {
                 let followup_history_score = self.continuation_history_table
-                    [second_last_move.chess_piece as usize][second_last_move.to_square]
-                    [moving_piece][chess_move.to_square];
+                    [last_move_from_current_player.chess_piece as usize]
+                    [last_move_from_current_player.to_square][moving_piece][chess_move.to_square];
 
-                history_score
-                    + (counter_history_score << HISTORY_WEIGHT_SHIFT_COUNTER)
-                    + (followup_history_score << HISTORY_WEIGHT_SHIFT_FOLLOWUP)
+                if let Some(second_last_move_from_opponent) =
+                    chess_position.get_second_last_move_from_opponent()
+                {
+                    let distant_counter_history_score = self.continuation_history_table
+                        [second_last_move_from_opponent.chess_piece as usize]
+                        [second_last_move_from_opponent.to_square][moving_piece]
+                        [chess_move.to_square];
+
+                    if let Some(second_last_move_from_current_player) =
+                        chess_position.get_second_last_move_from_current_player()
+                    {
+                        let distant_followup_history_score = self.continuation_history_table
+                            [second_last_move_from_current_player.chess_piece as usize]
+                            [second_last_move_from_current_player.to_square][moving_piece]
+                            [chess_move.to_square];
+
+                        history_score
+                            + (counter_history_score << HISTORY_WEIGHT_SHIFT_COUNTER)
+                            + (followup_history_score << HISTORY_WEIGHT_SHIFT_FOLLOWUP)
+                            + (distant_counter_history_score >> DISTANT_HISTORY_WEIGHT_SHIFT)
+                            + (distant_followup_history_score >> DISTANT_HISTORY_WEIGHT_SHIFT)
+                    } else {
+                        history_score
+                            + (counter_history_score << HISTORY_WEIGHT_SHIFT_COUNTER)
+                            + (followup_history_score << HISTORY_WEIGHT_SHIFT_FOLLOWUP)
+                            + (distant_counter_history_score >> DISTANT_HISTORY_WEIGHT_SHIFT)
+                    }
+                } else {
+                    history_score
+                        + (counter_history_score << HISTORY_WEIGHT_SHIFT_COUNTER)
+                        + (followup_history_score << HISTORY_WEIGHT_SHIFT_FOLLOWUP)
+                }
             } else {
-                history_score + counter_history_score << HISTORY_WEIGHT_SHIFT_COUNTER
+                history_score + (counter_history_score << HISTORY_WEIGHT_SHIFT_COUNTER)
             }
         } else {
             history_score
@@ -1295,28 +1639,56 @@ impl SearchEngine {
 
         let mut should_decay_history = *main_entry > HISTORY_DECAY_THRESHOLD;
 
-        if let Some(last_move) = chess_position.get_last_move() {
+        if let Some(last_move_from_opponent) = chess_position.get_last_move_from_opponent() {
             let continuation_entry = &mut self.continuation_history_table
-                [last_move.chess_piece as usize][last_move.to_square][moving_piece]
-                [chess_move.to_square];
+                [last_move_from_opponent.chess_piece as usize][last_move_from_opponent.to_square]
+                [moving_piece][chess_move.to_square];
 
             *continuation_entry += history_score_change;
             should_decay_history =
                 should_decay_history || *continuation_entry > HISTORY_DECAY_THRESHOLD;
 
-            if let Some(second_last_move) = chess_position.get_second_last_move() {
+            if let Some(last_move_from_current_player) =
+                chess_position.get_last_move_from_current_player()
+            {
                 let continuation_entry = &mut self.continuation_history_table
-                    [second_last_move.chess_piece as usize][second_last_move.to_square]
-                    [moving_piece][chess_move.to_square];
+                    [last_move_from_current_player.chess_piece as usize]
+                    [last_move_from_current_player.to_square][moving_piece][chess_move.to_square];
 
                 *continuation_entry += history_score_change;
                 should_decay_history =
                     should_decay_history || *continuation_entry > HISTORY_DECAY_THRESHOLD;
+
+                if let Some(second_last_move_from_opponent) =
+                    chess_position.get_second_last_move_from_opponent()
+                {
+                    let continuation_entry = &mut self.continuation_history_table
+                        [second_last_move_from_opponent.chess_piece as usize]
+                        [second_last_move_from_opponent.to_square][moving_piece]
+                        [chess_move.to_square];
+
+                    *continuation_entry += history_score_change >> DISTANT_HISTORY_WEIGHT_SHIFT;
+                    should_decay_history =
+                        should_decay_history || *continuation_entry > HISTORY_DECAY_THRESHOLD;
+
+                    if let Some(second_last_move_from_current_player) =
+                        chess_position.get_second_last_move_from_current_player()
+                    {
+                        let continuation_entry = &mut self.continuation_history_table
+                            [second_last_move_from_current_player.chess_piece as usize]
+                            [second_last_move_from_current_player.to_square][moving_piece]
+                            [chess_move.to_square];
+
+                        *continuation_entry += history_score_change >> DISTANT_HISTORY_WEIGHT_SHIFT;
+                        should_decay_history =
+                            should_decay_history || *continuation_entry > HISTORY_DECAY_THRESHOLD;
+                    }
+                }
             }
         }
 
         if let Some(searched_quiet_moves) = searched_quiet_moves {
-            let history_score_change = depth as Score;
+            let history_score_change = history_score_change >> 1;
 
             for chess_move in searched_quiet_moves {
                 let moving_piece = chess_position.board[chess_move.from_square] as usize;
@@ -1328,23 +1700,55 @@ impl SearchEngine {
                 should_decay_history =
                     should_decay_history || *main_entry < -HISTORY_DECAY_THRESHOLD;
 
-                if let Some(last_move) = chess_position.get_last_move() {
-                    let continuation_entry = &mut self.continuation_history_table
-                        [last_move.chess_piece as usize][last_move.to_square][moving_piece]
-                        [chess_move.to_square];
+                if let Some(last_move_from_opponent) = chess_position.get_last_move_from_opponent()
+                {
+                    let counter_entry = &mut self.continuation_history_table
+                        [last_move_from_opponent.chess_piece as usize]
+                        [last_move_from_opponent.to_square][moving_piece][chess_move.to_square];
 
-                    *continuation_entry -= history_score_change;
+                    *counter_entry -= history_score_change;
                     should_decay_history =
-                        should_decay_history || *continuation_entry < -HISTORY_DECAY_THRESHOLD;
+                        should_decay_history || *counter_entry < -HISTORY_DECAY_THRESHOLD;
 
-                    if let Some(second_last_move) = chess_position.get_second_last_move() {
-                        let continuation_entry = &mut self.continuation_history_table
-                            [second_last_move.chess_piece as usize][second_last_move.to_square]
-                            [moving_piece][chess_move.to_square];
+                    if let Some(last_move_from_current_player) =
+                        chess_position.get_last_move_from_current_player()
+                    {
+                        let followup_entry = &mut self.continuation_history_table
+                            [last_move_from_current_player.chess_piece as usize]
+                            [last_move_from_current_player.to_square][moving_piece]
+                            [chess_move.to_square];
 
-                        *continuation_entry -= history_score_change;
+                        *followup_entry -= history_score_change;
                         should_decay_history =
-                            should_decay_history || *continuation_entry < -HISTORY_DECAY_THRESHOLD;
+                            should_decay_history || *followup_entry < -HISTORY_DECAY_THRESHOLD;
+
+                        if let Some(second_last_move_from_opponent) =
+                            chess_position.get_second_last_move_from_opponent()
+                        {
+                            let continuation_entry = &mut self.continuation_history_table
+                                [second_last_move_from_opponent.chess_piece as usize]
+                                [second_last_move_from_opponent.to_square][moving_piece]
+                                [chess_move.to_square];
+
+                            *continuation_entry -=
+                                history_score_change >> DISTANT_HISTORY_WEIGHT_SHIFT;
+                            should_decay_history = should_decay_history
+                                || *continuation_entry < -HISTORY_DECAY_THRESHOLD;
+
+                            if let Some(second_last_move_from_current_player) =
+                                chess_position.get_second_last_move_from_current_player()
+                            {
+                                let continuation_entry = &mut self.continuation_history_table
+                                    [second_last_move_from_current_player.chess_piece as usize]
+                                    [second_last_move_from_current_player.to_square][moving_piece]
+                                    [chess_move.to_square];
+
+                                *continuation_entry -=
+                                    history_score_change >> DISTANT_HISTORY_WEIGHT_SHIFT;
+                                should_decay_history = should_decay_history
+                                    || *continuation_entry < -HISTORY_DECAY_THRESHOLD;
+                            }
+                        }
                     }
                 }
             }
@@ -1358,13 +1762,17 @@ impl SearchEngine {
     #[inline(always)]
     fn decay_history(&mut self) {
         for moving_piece in WP as usize..=BK as usize {
-            for from_square in A1..=H8 {
-                for to_square in A1..=H8 {
-                    self.main_history_table[moving_piece][to_square] >>= 1;
+            for to_square in A1..=H8 {
+                self.main_history_table[moving_piece][to_square] >>= 1;
+            }
+        }
 
-                    for counter_followup_piece in WP as usize..=BK as usize {
-                        self.continuation_history_table[moving_piece][from_square]
-                            [counter_followup_piece][to_square] >>= 1;
+        for prev_piece in WP as usize..=BK as usize {
+            for prev_to_square in A1..=H8 {
+                for current_piece in WP as usize..=BK as usize {
+                    for current_to_square in A1..=H8 {
+                        self.continuation_history_table[prev_piece][prev_to_square]
+                            [current_piece][current_to_square] >>= 1;
                     }
                 }
             }
@@ -1381,7 +1789,7 @@ impl SearchEngine {
             SearchInfo {
                 score,
                 depth,
-                searched_node_count: self.searched_node_count,
+                searched_node_count: self.searched_or_pruned_node_count,
                 selected_depth: self.selected_depth,
                 searched_time_ms: self.search_start_time.elapsed().as_millis() as MilliSeconds,
                 hash_utilization_permil: self.transposition_table.get_utilization_permil(),

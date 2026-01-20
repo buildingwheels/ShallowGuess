@@ -1,5 +1,4 @@
 import argparse
-import mmap
 import os
 import random
 import signal
@@ -8,198 +7,19 @@ from datetime import datetime
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-from model import ShallowGuessNetwork
-from torch.utils.data import DataLoader, Dataset
+from dataset_utils import mmap_collate_fn
+from torch.utils.data import DataLoader
 
 HUNDRED_BASE = 100.0
 MILLION_BASE = 1000000.0
 SECONDS_PER_HOUR = 3600
 
 
-class MmapFileDataset(Dataset):
-    def __init__(self, file_path):
-        self.file_path = file_path
-        self.offsets = []
-        self.length = 0
-
-        print(f"Indexing file: {file_path}...")
-        with open(file_path, "rb") as f:
-            self.offsets.append(f.tell())
-            while f.readline():
-                self.offsets.append(f.tell())
-
-        self.offsets.pop()
-        self.length = len(self.offsets)
-        print(
-            f"Indexing complete. Found {(self.length / MILLION_BASE):.2f}M samples."
-        )
-
-        self.f = open(file_path, "rb")
-        self.mmap_obj = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
-
-    def get_batch_indices(self, indices):
-        return self._get_batch(slice(indices[0], indices[-1] + 1))
-
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, idx):
-        if isinstance(idx, slice):
-            return self._get_batch(idx)
-        else:
-            return self._get_single(idx)
-
-    def _get_single(self, idx):
-        start_pos = self.offsets[idx]
-        end_pos = (
-            self.offsets[idx + 1] if idx + 1 < self.length else self.mmap_obj.size()
-        )
-
-        line_bytes = self.mmap_obj[start_pos:end_pos]
-
-        line = line_bytes.decode("utf-8").strip()
-        values = line.split(",")
-
-        decompressed_features = []
-        for value in values[:-2]:
-            if value.isdigit():
-                decompressed_features.extend([0.0] * int(value))
-            else:
-                decompressed_features.append(1.0)
-
-        assert len(decompressed_features) == 768, f"Decompressed features length {len(decompressed_features)} != 768"
-        features = torch.tensor(decompressed_features, dtype=torch.float32)
-
-        original_result = float(values[-2])
-
-        if original_result == 0.0:
-            result = torch.tensor(0, dtype=torch.long)
-        elif original_result == 0.5:
-            result = torch.tensor(1, dtype=torch.long)
-        elif original_result == 1.0:
-            result = torch.tensor(2, dtype=torch.long)
-        else:
-            raise ValueError(f"Invalid result {original_result}")
-
-        position_count = int(values[-1])
-
-        return (
-            features,
-            result,
-            torch.tensor(position_count, dtype=torch.float32),
-        )
-
-    def _get_batch(self, idx_slice):
-        start_idx = idx_slice.start if idx_slice.start is not None else 0
-        stop_idx = idx_slice.stop if idx_slice.stop is not None else self.length
-        step = idx_slice.step if idx_slice.step is not None else 1
-
-        indices = list(range(start_idx, stop_idx, step))
-        batch_size = len(indices)
-
-        batch_features = torch.zeros((batch_size, 768), dtype=torch.float32)
-        batch_results = torch.zeros(batch_size, dtype=torch.long)
-        batch_position_counts = torch.zeros(batch_size, dtype=torch.float32)
-
-        for i, idx in enumerate(indices):
-            start_pos = self.offsets[idx]
-            end_pos = (
-                self.offsets[idx + 1] if idx + 1 < self.length else self.mmap_obj.size()
-            )
-
-            line_bytes = self.mmap_obj[start_pos:end_pos]
-            line = line_bytes.decode("utf-8").strip()
-
-            last_comma = line.rfind(",")
-            second_last_comma = line.rfind(",", 0, last_comma)
-
-            features_part = line[:second_last_comma]
-            result_part = line[second_last_comma + 1 : last_comma]
-            position_part = line[last_comma + 1 :]
-
-            feature_idx = 0
-            value_start = 0
-            while value_start < len(features_part):
-                next_comma = features_part.find(",", value_start)
-                if next_comma == -1:
-                    next_comma = len(features_part)
-
-                value = features_part[value_start:next_comma]
-                if value.isdigit():
-                    feature_idx += int(value)
-                else:
-                    batch_features[i, feature_idx] = 1.0
-                    feature_idx += 1
-
-                value_start = next_comma + 1
-
-            assert feature_idx == 768, f"feature_idx {feature_idx} != 768"
-            original_result = float(result_part)
-            if original_result == 0.0:
-                batch_results[i] = 0
-            elif original_result == 0.5:
-                batch_results[i] = 1
-            elif original_result == 1.0:
-                batch_results[i] = 2
-            else:
-                raise ValueError(f"Invalid result {original_result}")
-
-            position_count = int(position_part)
-            batch_position_counts[i] = float(position_count)
-
-        return batch_features, batch_results, batch_position_counts
-
-    def __del__(self):
-        self.close()
-
-    def close(self):
-        if hasattr(self, "mmap_obj"):
-            self.mmap_obj.close()
-            delattr(self, "mmap_obj")
-        if hasattr(self, "f"):
-            self.f.close()
-            delattr(self, "f")
-
-
-
-
-
-
-
-def mmap_collate_fn(batch):
-    if not batch:
-        return torch.tensor([]), torch.tensor([]), torch.tensor([])
-
-    features, results, position_counts = zip(*batch)
-
-    batch_features = torch.stack(features)
-    batch_results = torch.stack(results)
-    batch_position_counts = torch.stack(position_counts)
-
-    return batch_features, batch_results, batch_position_counts
-
-
-class WeightedCrossEntropyLoss(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, outputs, targets, weights=None):
-        if weights is None:
-            return F.cross_entropy(outputs, targets)
-
-        loss_per_sample = F.cross_entropy(outputs, targets, reduction="none")
-        weighted_loss_per_sample = loss_per_sample * weights
-
-        return weighted_loss_per_sample.sum()
-
-
 training_interrupted = False
 
 
 def bold(text):
-    """Return text with bold formatting."""
     return f"\033[1m{text}\033[0m"
 
 
@@ -227,38 +47,111 @@ def check_gradient_norm(model):
     return total_norm, layer_norms
 
 
+def evaluate_validation(
+    model,
+    criterion,
+    device,
+    model_type,
+    batch_size,
+    validation_dataset,
+):
+    dataloader = DataLoader(
+        validation_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        persistent_workers=False,
+        collate_fn=mmap_collate_fn,
+    )
+
+    was_training = model.training
+    model.eval()
+    total_loss = 0.0
+    total_samples = 0
+
+    with torch.no_grad():
+        for batch_features, batch_targets in dataloader:
+            batch_features = batch_features.to(device)
+            batch_targets = batch_targets.to(device)
+
+            if model_type == "coach":
+                loss = criterion(model(batch_features), batch_targets)
+            else:
+                outputs = model(batch_features).squeeze()
+                loss = criterion(outputs, batch_targets)
+
+            total_loss += loss.item() * len(batch_features)
+            total_samples += len(batch_features)
+
+    model.train(was_training)
+
+    del dataloader
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+    return avg_loss
+
+
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("first_hidden_layer_size", type=int)
+    parser.add_argument("model_type", choices=["coach", "player"])
+    parser.add_argument("hidden_layer_size", type=int)
     parser.add_argument("data_dir")
+    parser.add_argument("validation_file")
     parser.add_argument("model_export_path")
     parser.add_argument("max_epochs", type=int)
     parser.add_argument("sample_size", type=int)
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--learning_rate", type=float, default=0.001)
-    parser.add_argument("--print_cycle", type=int, default=100)
+    parser.add_argument("--print_cycle", type=int, default=10)
     parser.add_argument("--export_cycle", type=int, default=1000)
     parser.add_argument("--existing_pth_file", default=None)
     parser.add_argument("--enable_diagnostics", action="store_true", default=False)
-    parser.add_argument(
-        "--max_pos_count",
-        type=int,
-        default=400,
-        help="Max move count for weight scaling",
-    )
+
     parser.add_argument(
         "--training_log_file",
         type=str,
         default=None,
         help="Path to the training log file",
     )
+    parser.add_argument(
+        "--fine_tuning",
+        action="store_true",
+        default=False,
+        help="Use fine-tuning mode (SGD with momentum) instead of standard training (AdamW)",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.7,
+        help="Mixing weight for coach vs ground truth loss (player model only)",
+    )
+
     args = parser.parse_args()
+
+    from coach_model import CoachModel
+    from player_model import PlayerModel
+
+    if args.model_type == "coach":
+        from coach_dataset import MmapFileDataset
+
+        Model = CoachModel
+        criterion = nn.CrossEntropyLoss()
+        log_suffix = "_coach"
+    else:
+        from player_dataset import MmapFileDataset
+
+        Model = PlayerModel
+        criterion = nn.MSELoss()
+        log_suffix = "_player"
+
+    from dataset_utils import mmap_collate_fn
 
     if args.training_log_file is None:
         args.training_log_file = (
-            f"temp/training_log_{args.first_hidden_layer_size}.log"
+            f"temp/training_log{log_suffix}_{args.hidden_layer_size}.log"
         )
 
     os.makedirs(os.path.dirname(args.training_log_file), exist_ok=True)
@@ -266,21 +159,27 @@ if __name__ == "__main__":
     if not os.path.exists(args.training_log_file):
         with open(args.training_log_file, "w") as f:
             f.write("Training Config:\n")
-            f.write(f"Model Hidden Layers={args.first_hidden_layer_size}\n")
+            f.write(f"Model Type={args.model_type}\n")
+            f.write(f"Model Hidden Layers={args.hidden_layer_size}\n")
             f.write(f"Batch Size={args.batch_size}\n")
             f.write(f"Learning Rate={args.learning_rate}\n")
             f.write(f"Max Epochs={args.max_epochs}\n")
             f.write(f"Sample Size={args.sample_size}\n")
-            f.write(f"Max Position Count={args.max_pos_count}\n\n")
+            if args.model_type == "player":
+                f.write(f"Alpha (coach weight)={args.alpha}\n")
+            f.write("\n")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    print(f"Hidden layers: {args.first_hidden_layer_size}")
+    print(f"Model type: {args.model_type}")
+    print(f"Hidden layers: {args.hidden_layer_size}")
     print(f"Batch size: {args.batch_size}")
     print(f"Learning rate: {args.learning_rate}")
+    if args.model_type == "player":
+        print(f"Alpha (coach weight): {args.alpha}")
     print(f"Log file: {args.training_log_file}")
 
-    model = ShallowGuessNetwork(args.first_hidden_layer_size).to(device)
+    model = Model(args.hidden_layer_size).to(device)
 
     if args.existing_pth_file:
         model.load_state_dict(
@@ -289,14 +188,42 @@ if __name__ == "__main__":
         )
         print(f"Loaded existing model file {args.existing_pth_file}")
 
-    weighted_criterion = WeightedCrossEntropyLoss()
-
-    standard_criterion = nn.CrossEntropyLoss()
-
-    optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
+    if args.fine_tuning:
+        optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
+    else:
+        optimizer = optim.AdamW(
+            model.parameters(), lr=args.learning_rate, weight_decay=1e-4
+        )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.1, patience=1
+        optimizer, mode="min", factor=0.1, patience=3
     )
+
+    if not os.path.isfile(args.validation_file):
+        print(
+            f"Error: validation file '{args.validation_file}' does not exist or is not a file."
+        )
+        sys.exit(1)
+
+    if args.model_type == "coach":
+        from coach_dataset import MmapFileDataset as ValidationDataset
+    else:
+        from player_validation_dataset import (
+            PlayerValidationDataset as ValidationDataset,
+        )
+    validation_dataset = ValidationDataset(args.validation_file)
+
+    validation_loss = evaluate_validation(
+        model=model,
+        criterion=criterion,
+        device=device,
+        model_type=args.model_type,
+        batch_size=args.batch_size,
+        validation_dataset=validation_dataset,
+    )
+    print(f"{bold('Initial Validation Loss')}: {validation_loss:.4f}")
+    with open(args.training_log_file, "a") as f:
+        f.write("--- Initial Validation ---\n")
+        f.write(f"Validation Loss={validation_loss:.6f}\n\n")
 
     file_list = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir)]
 
@@ -318,8 +245,6 @@ if __name__ == "__main__":
             trained_files_count[file_name] += 1
 
         epoch_loss = 0.0
-        epoch_weighted_loss = 0.0
-        epoch_weights_sum = 0.0
         epoch_samples_trained = 0
         batch_count = 0
 
@@ -340,44 +265,46 @@ if __name__ == "__main__":
             try:
                 for batch_idx, (
                     batch_features,
-                    batch_results,
-                    batch_position_counts,
+                    batch_targets,
                 ) in enumerate(dataloader):
                     if training_interrupted:
                         break
 
                     batch_start_time = datetime.now()
                     batch_features = batch_features.to(device)
-                    batch_results = batch_results.to(device)
-                    batch_position_counts = batch_position_counts.to(device)
 
-                    batch_weights = torch.tensor(
-                        [
-                            pos.item() / args.max_pos_count
-                            for pos in batch_position_counts
-                        ],
-                        device=device,
-                    )
+                    batch_weights = None
 
                     optimizer.zero_grad()
                     outputs = model(batch_features)
 
-                    weighted_loss = weighted_criterion(
-                        outputs, batch_results, batch_weights
-                    )
-                    weighted_loss.backward()
+                    if args.model_type == "coach":
+                        batch_targets = batch_targets.to(device)
+                        loss = criterion(outputs, batch_targets)
+                    else:
+                        if not isinstance(batch_targets, tuple):
+                            raise ValueError(
+                                f"Player model expects tuple (win_probs, original_results), got {type(batch_targets)}"
+                            )
+                        batch_win_probs, batch_original_results = batch_targets
+                        batch_win_probs = batch_win_probs.to(device)
+                        batch_original_results = batch_original_results.to(device)
 
-                    with torch.no_grad():
-                        standard_loss = standard_criterion(outputs, batch_results)
+                        coach_loss = criterion(outputs.squeeze(), batch_win_probs)
+                        ground_truth_loss = criterion(
+                            outputs.squeeze(), batch_original_results
+                        )
+                        loss = (
+                            args.alpha * coach_loss
+                            + (1 - args.alpha) * ground_truth_loss
+                        )
 
+                    loss.backward()
                     optimizer.step()
 
-                    batch_loss = standard_loss.item()
-                    batch_weighted_loss = weighted_loss.item()
+                    batch_loss = loss.item()
 
                     epoch_loss += batch_loss
-                    epoch_weighted_loss += batch_weighted_loss
-                    epoch_weights_sum += batch_weights.sum().item()
 
                     samples_count = len(batch_features)
                     epoch_samples_trained += samples_count
@@ -404,7 +331,7 @@ if __name__ == "__main__":
                             f"{bold('Batch')} {batch_idx + 1}/{len(dataloader)} "
                             f"{bold('Samples')}: {(total_samples_trained / MILLION_BASE):.2f}M "
                             f"{bold('Loss')}: {batch_loss:.4f} "
-                            f"{bold('Avg Weighted Loss')}: {(epoch_weighted_loss / max(batch_count, 1)):.4f} "
+                            f"{bold('Avg Loss')}: {(epoch_loss / max(batch_count, 1)):.4f} "
                             f"{bold('Grad Norm')}: {grad_norm:.4f} "
                             f"{bold('Batch Time')}: {batch_time:.3f}s "
                             f"{bold('Samples/sec')}: {samples_per_second:.0f} "
@@ -417,40 +344,6 @@ if __name__ == "__main__":
                             model.state_dict(),
                             f"{args.model_export_path}/{model.pub_name()}.pth",
                         )
-
-                        current_avg_weighted_loss = epoch_weighted_loss / max(
-                            batch_count, 1
-                        )
-
-                        with open(args.training_log_file, "a") as f:
-                            epoch_time = (
-                                datetime.now() - epoch_start_time
-                            ).total_seconds()
-                            total_time = (datetime.now() - start_time).total_seconds()
-                            f.write(
-                                f"Timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            )
-                            f.write(f"Epoch={epoch}/{args.max_epochs}\n")
-                            f.write(f"Batch={batch_idx + 1}/{len(dataloader)}\n")
-                            f.write(
-                                f"Samples (M)={total_samples_trained / MILLION_BASE:.2f}\n"
-                            )
-                            f.write(f"Loss={batch_loss:.6f}\n")
-                            f.write(
-                                f"Avg Weighted Loss={current_avg_weighted_loss:.6f}\n"
-                            )
-                            f.write(f"Batch Weighted Loss={batch_weighted_loss:.6f}\n")
-                            f.write(
-                                f"Epoch Time (h)={epoch_time / SECONDS_PER_HOUR:.3f}\n"
-                            )
-                            f.write(
-                                f"Total Time (h)={total_time / SECONDS_PER_HOUR:.3f}\n"
-                            )
-                            f.write(
-                                f"Learning Rate={optimizer.param_groups[0]['lr']:.6f}\n"
-                            )
-                            f.write(f"Batch Time (s)={batch_time:.3f}\n")
-                            f.write(f"Samples/sec={samples_per_second:.0f}\n\n")
 
                         print(
                             f"[SAVED] {args.model_export_path}/{model.pub_name()}.pth"
@@ -470,12 +363,19 @@ if __name__ == "__main__":
                     torch.cuda.empty_cache()
 
         avg_epoch_loss = epoch_loss / max(batch_count, 1)
-        avg_weighted_loss = epoch_weighted_loss / max(batch_count, 1)
-        avg_weight = epoch_weights_sum / max(epoch_samples_trained, 1)
         epoch_time = (datetime.now() - epoch_start_time).total_seconds()
         total_time = (datetime.now() - start_time).total_seconds()
 
-        scheduler.step(avg_weighted_loss)
+        validation_loss = evaluate_validation(
+            model=model,
+            criterion=criterion,
+            device=device,
+            model_type=args.model_type,
+            batch_size=args.batch_size,
+            validation_dataset=validation_dataset,
+        )
+
+        scheduler.step(validation_loss)
 
         samples_per_sec_epoch = (
             epoch_samples_trained / epoch_time if epoch_time > 0 else 0
@@ -485,8 +385,7 @@ if __name__ == "__main__":
             f.write("--- Epoch Summary ---\n")
             f.write(f"Epoch={epoch}/{args.max_epochs}\n")
             f.write(f"Avg Loss={avg_epoch_loss:.6f}\n")
-            f.write(f"Avg Weighted Loss={avg_weighted_loss:.6f}\n")
-            f.write(f"Avg Weight={avg_weight:.6f}\n")
+            f.write(f"Validation Loss={validation_loss:.6f}\n")
             f.write(f"Epoch Time (h)={epoch_time / SECONDS_PER_HOUR:.3f}\n")
             f.write(f"Total Time (h)={total_time / SECONDS_PER_HOUR:.3f}\n")
             f.write(f"Avg Samples/sec={samples_per_sec_epoch:.0f}\n")
@@ -495,14 +394,14 @@ if __name__ == "__main__":
         print(
             f"--- Epoch {epoch}/{args.max_epochs} Completed --- \n"
             f"{bold('Loss')}: {avg_epoch_loss:.4f}\n"
-            f"{bold('Avg Weighted Loss')}: {avg_weighted_loss:.4f}\n"
-            f"{bold('Avg Weight')}: {avg_weight:.4f}\n"
+            f"{bold('Validation Loss')}: {validation_loss:.4f}\n"
             f"{bold('Epoch Time')}: {epoch_time / SECONDS_PER_HOUR:.2f}h\n"
             f"{bold('Total Time')}: {total_time / SECONDS_PER_HOUR:.2f}h\n"
             f"{bold('Avg Samples/sec')}: {samples_per_sec_epoch:.0f}\n"
             f"{bold('LR')}: {optimizer.param_groups[0]['lr']:.6f}\n\n"
         )
 
+    validation_dataset.close()
     if training_interrupted:
         print("[INTERRUPTED] Saving final model...")
     else:
@@ -520,7 +419,6 @@ if __name__ == "__main__":
     minutes = int((total_training_time % 3600) // 60)
     seconds = total_training_time % 60
 
-    print("=== Training Summary ===\n")
     print(f"Total samples trained: {total_samples_trained:,}")
     print(f"Total training time: {hours}h {minutes}m {seconds:.1f}s")
     print(

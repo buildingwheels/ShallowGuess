@@ -58,23 +58,56 @@ pub fn digit_to_char(index: usize) -> char {
     (index as u8 + b'0') as char
 }
 
+const U16_SQRT_TABLE_SIZE: usize = 512;
+const U16_SQRT_MAX: u16 = 256;
+const U16_SQRT_TABLE: [u16; U16_SQRT_TABLE_SIZE] = precompute_u16_sqrt_table();
+
+const fn precompute_u16_sqrt_table() -> [u16; U16_SQRT_TABLE_SIZE] {
+    let mut table = [0u16; U16_SQRT_TABLE_SIZE];
+    let mut index = 0;
+    while index < U16_SQRT_TABLE_SIZE {
+        let mut value = 0u16;
+
+        while (value as u32 + 1) * (value as u32 + 1) <= index as u32 {
+            value += 1;
+        }
+
+        table[index] = value;
+        index += 1;
+    }
+
+    table
+}
+
 #[inline(always)]
 pub fn u16_sqrt(value: u16) -> u16 {
     if value <= 1 {
         return value;
     }
 
+    let index = value as usize;
+
+    if index < U16_SQRT_TABLE_SIZE {
+        U16_SQRT_TABLE[index]
+    } else {
+        u16_sqrt_fallback(value)
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn u16_sqrt_fallback(value: u16) -> u16 {
     let mut low = 0;
-    let mut high = value;
+    let mut high = value.min(U16_SQRT_MAX);
     let mut result = 0;
 
     while low <= high {
-        let mid = (low + high) >> 1;
-        let mid_squared = mid * mid;
+        let mid = ((low as u32 + high as u32) >> 1) as u16;
+        let mid_squared = mid as u32 * mid as u32;
 
-        if mid_squared == value {
+        if mid_squared == value as u32 {
             return mid;
-        } else if mid_squared < value {
+        } else if mid_squared < value as u32 {
             low = mid + 1;
             result = mid;
         } else {

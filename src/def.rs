@@ -3,7 +3,7 @@
 
 use crate::types::{CastlingFlag, ChessFile, ChessPiece, ChessSquare, Player, Score};
 
-pub const STACK_SIZE_BYTES: usize = 64 * 1024 * 1024;
+pub const STACK_SIZE_BYTES: usize = 128 * 1024 * 1024;
 
 pub const CHESS_SQUARE_COUNT: usize = 64;
 pub const PIECE_TYPE_COUNT: usize = 13;

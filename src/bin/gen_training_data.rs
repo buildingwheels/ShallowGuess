@@ -14,12 +14,12 @@ use shallow_guess::chess_position::ChessPosition;
 use shallow_guess::def::{A1, BLACK, H8, NO_PIECE, PIECE_TYPE_COUNT, WHITE};
 use shallow_guess::network::{calculate_network_input_layer_index, FastNoOpNetwork, Network};
 use shallow_guess::network_weights::INPUT_LAYER_SIZE;
-use shallow_guess::types::{ChessMoveCount, ChessPiece, ChessSquare, Score, SearchPly};
+use shallow_guess::types::{ChessPiece, ChessSquare, Score, SearchPly};
 use shallow_guess::util::{
     read_lines, NetworkInputs, FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES,
 };
 
-const ONE_SYMBOL: &str = "X,";
+const ONE_SYMBOL: &str = "X";
 
 const MATERIAL_SCORES: [Score; PIECE_TYPE_COUNT] =
     [0, 1, 3, 3, 5, 10, 100, -1, -3, -3, -5, -10, -100];
@@ -115,7 +115,6 @@ fn generate_training_set(
 
             let network_inputs = parse_network_inputs_from_fen(&chess_position);
             let mut result = splits[1].parse::<f64>().unwrap();
-            let position_count = splits[2].parse::<ChessMoveCount>().unwrap();
 
             if chess_position.player == BLACK {
                 result = 1. - result;
@@ -128,7 +127,7 @@ fn generate_training_set(
                     zero_count += 1;
                 } else {
                     if zero_count > 0 {
-                        output_batch_buffer.push_str(&format!("{},", zero_count));
+                        output_batch_buffer.push_str(&format!("{}", zero_count));
                         zero_count = 0;
                     }
 
@@ -137,10 +136,10 @@ fn generate_training_set(
             }
 
             if zero_count > 0 {
-                output_batch_buffer.push_str(&format!("{},", zero_count));
+                output_batch_buffer.push_str(&format!("{}", zero_count));
             }
 
-            output_batch_buffer.push_str(&format!("{},{}\n", result, position_count));
+            output_batch_buffer.push_str(&format!(",{}\n", result));
             training_size += 1;
             buffered_line_count += 1;
 

@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Zixiao Han
 // SPDX-License-Identifier: MIT
 
+use shallow_guess::types::ChessMoveCount;
 use shallow_guess::util::read_lines;
 use std::env;
 use std::fs::File;
@@ -12,12 +13,14 @@ fn main() {
 
     let original_fen_file = args.next().unwrap();
     let output_file = args.next().unwrap();
-    let max_count = args.next().unwrap().parse::<u128>().unwrap();
+    let skip_count = args.next().unwrap().parse::<ChessMoveCount>().unwrap();
+    let max_count = args.next().unwrap().parse::<ChessMoveCount>().unwrap();
     let skip_terminated_game = args.next().unwrap().parse::<bool>().unwrap();
 
     filter_fen_data(
         &original_fen_file,
         &output_file,
+        skip_count,
         max_count,
         skip_terminated_game,
     );
@@ -26,15 +29,18 @@ fn main() {
 fn filter_fen_data(
     fen_file: &str,
     output_file_path: &str,
-    max_positions_per_game: u128,
+    skip_count: ChessMoveCount,
+    max_count: ChessMoveCount,
     skip_terminated_game: bool,
 ) {
     let output_file = File::create(output_file_path).unwrap();
     let mut file_writer = LineWriter::new(output_file);
+
+    let mut total_position_count: u128 = 0;
+
     let mut current_game_result = 0.;
-    let mut position_count: u128 = 0;
+    let mut current_game_position_count = 0;
     let mut skip_current_game = false;
-    let mut skipped_count = 0;
 
     if let Ok(lines) = read_lines(fen_file) {
         for line in lines.flatten() {
@@ -55,27 +61,21 @@ fn filter_fen_data(
                     current_game_result = 1.;
                 }
 
-                position_count = 0;
+                current_game_position_count = 0;
                 skip_current_game = false;
             } else if !line.contains("[") {
                 if skip_current_game {
-                    skipped_count += 1;
                     continue;
                 }
 
-                position_count += 1;
+                current_game_position_count += 1;
+                total_position_count += 1;
 
-                if position_count > 1 && position_count < max_positions_per_game {
+                if current_game_position_count > skip_count
+                    && current_game_position_count < max_count
+                {
                     file_writer
-                        .write(
-                            format!(
-                                "{},{},{}\n",
-                                line.trim(),
-                                current_game_result,
-                                position_count
-                            )
-                            .as_bytes(),
-                        )
+                        .write(format!("{},{}\n", line.trim(), current_game_result,).as_bytes())
                         .unwrap();
                 }
             }
@@ -83,7 +83,7 @@ fn filter_fen_data(
     }
 
     println!(
-        "Completed filtering FEN data with size {} (skipped {}) to: {}",
-        position_count, skipped_count, output_file_path
+        "Completed filtering FEN data with size {} to: {}",
+        total_position_count, output_file_path
     );
 }

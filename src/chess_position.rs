@@ -14,8 +14,8 @@ use crate::fen::{
 };
 use crate::network::Network;
 use crate::types::{
-    CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessSquare, HashKey, HistoryMove,
-    Score, EMPTY_HISTORY_MOVE,
+    CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, ChessSquare, HashKey,
+    HistoryMove, Score, EMPTY_HISTORY_MOVE,
 };
 use crate::util::{char_to_digit, digit_to_char, get_file};
 use crate::zobrist::{CASTLING_FLAG_HASH, ENPASSANT_SQUARE_HASH, PIECE_SQUARE_HASH, PLAYER_HASH};
@@ -50,9 +50,9 @@ pub struct ChessPosition<N: Network> {
     pub full_move_count: ChessMoveCount,
     pub hash_key: HashKey,
 
-    hash_key_history: Vec<HashKey>,
-    hash_key_history_per_search: Vec<HashKey>,
+    hash_key_history: Vec<(HashKey, BitBoard)>,
     chess_move_history: Vec<HistoryMove>,
+    null_move_count: ChessMoveCount,
 }
 
 impl<N: Network> ChessPosition<N> {
@@ -73,16 +73,16 @@ impl<N: Network> ChessPosition<N> {
             hash_key: 0,
 
             hash_key_history: Vec::new(),
-            hash_key_history_per_search: Vec::new(),
             chess_move_history: Vec::new(),
+            null_move_count: 0,
         }
     }
 
     pub fn set_from_fen(&mut self, fen: &str) {
         self.hash_key = 0;
         self.hash_key_history.clear();
-        self.hash_key_history_per_search.clear();
         self.chess_move_history.clear();
+        self.null_move_count = 0;
 
         self.board = [NO_PIECE; CHESS_SQUARE_COUNT];
         self.bitboards = [EMPTY_MASK; PIECE_TYPE_COUNT];
@@ -266,86 +266,108 @@ impl<N: Network> ChessPosition<N> {
         fen
     }
 
-    pub fn clear_hash_key_history_per_search(&mut self) {
-        self.hash_key_history_per_search.clear();
-    }
-
-    pub fn is_draw(&self) -> bool {
+    pub fn is_repetition_draw(&self) -> bool {
         if self.half_move_count >= FIFTY_MOVES {
             return true;
         }
 
-        if self.half_move_count < 2 {
-            return false;
-        }
-
         let full_history_len = self.hash_key_history.len();
-        let current_search_history_len = self.hash_key_history_per_search.len();
+        let max_search_range = (self.half_move_count + self.null_move_count) as usize;
 
-        let search_range = self.half_move_count as usize;
+        let current_hash_key = self.hash_key;
+        let current_safe_mask = self.white_all_bitboard | self.black_all_bitboard;
 
         let mut search_index = 0;
-        let mut found_duplicate = false;
 
-        while search_index < search_range {
+        loop {
             search_index += 1;
 
-            if search_index <= current_search_history_len {
-                if self.hash_key
-                    == self.hash_key_history_per_search[current_search_history_len - search_index]
-                {
-                    return true;
-                }
-            }
-
-            if search_index > full_history_len {
+            if search_index > full_history_len || search_index > max_search_range {
                 break;
             }
 
-            if self.hash_key == self.hash_key_history[full_history_len - search_index] {
-                if found_duplicate {
-                    return true;
-                }
+            let (hash_key, safe_mask) = self.hash_key_history[full_history_len - search_index];
 
-                found_duplicate = true;
+            if current_hash_key == hash_key && current_safe_mask == safe_mask {
+                return true;
             }
         }
 
         false
     }
 
-    pub fn is_pawn_endgame(&self) -> bool {
-        self.bitboards[WN as usize]
+    pub fn is_material_draw(&self) -> bool {
+        if self.bitboards[WP as usize]
+            | self.bitboards[WR as usize]
+            | self.bitboards[WQ as usize]
+            | self.bitboards[BP as usize]
+            | self.bitboards[BR as usize]
+            | self.bitboards[BQ as usize]
+            != EMPTY_MASK
+        {
+            return false;
+        }
+
+        let white_bishops_count = self.bitboards[WB as usize].count_ones();
+        let black_bishops_count = self.bitboards[BB as usize].count_ones();
+
+        if white_bishops_count > 1 || black_bishops_count > 1 {
+            return false;
+        }
+
+        let white_knights_count = self.bitboards[WN as usize].count_ones();
+        let black_knights_count = self.bitboards[BN as usize].count_ones();
+
+        if white_knights_count > 2 || black_knights_count > 2 {
+            return false;
+        }
+
+        if white_bishops_count > 0 && white_knights_count > 0 {
+            return false;
+        }
+
+        if black_bishops_count > 0 && black_knights_count > 0 {
+            return false;
+        }
+
+        true
+    }
+
+    pub fn get_piece_count(&self) -> ChessPieceCount {
+        (self.bitboards[WN as usize]
             | self.bitboards[WB as usize]
             | self.bitboards[WR as usize]
             | self.bitboards[WQ as usize]
             | self.bitboards[BN as usize]
             | self.bitboards[BB as usize]
             | self.bitboards[BR as usize]
-            | self.bitboards[BQ as usize]
-            == EMPTY_MASK
+            | self.bitboards[BQ as usize])
+            .count_ones()
     }
 
-    pub fn get_last_move(&self) -> Option<&HistoryMove> {
-        if self.chess_move_history.len() > 0 {
-            let last_move = &self.chess_move_history[self.chess_move_history.len() - 1];
-
-            if last_move.chess_piece != NO_PIECE {
-                Some(last_move)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+    pub fn get_last_move_from_opponent(&self) -> Option<&HistoryMove> {
+        self.get_nth_previous_move(1)
     }
 
-    pub fn get_second_last_move(&self) -> Option<&HistoryMove> {
-        if self.chess_move_history.len() > 1 {
-            let second_last_move = &self.chess_move_history[self.chess_move_history.len() - 2];
+    pub fn get_last_move_from_current_player(&self) -> Option<&HistoryMove> {
+        self.get_nth_previous_move(2)
+    }
 
-            if second_last_move.chess_piece != NO_PIECE {
-                Some(second_last_move)
+    pub fn get_second_last_move_from_opponent(&self) -> Option<&HistoryMove> {
+        self.get_nth_previous_move(3)
+    }
+
+    pub fn get_second_last_move_from_current_player(&self) -> Option<&HistoryMove> {
+        self.get_nth_previous_move(4)
+    }
+
+    #[inline(always)]
+    fn get_nth_previous_move(&self, n: usize) -> Option<&HistoryMove> {
+        if self.chess_move_history.len() >= n {
+            let nth_previous_move = &self.chess_move_history[self.chess_move_history.len() - n];
+
+            if nth_previous_move.chess_piece != NO_PIECE {
+                Some(nth_previous_move)
             } else {
                 None
             }
@@ -359,8 +381,7 @@ impl<N: Network> ChessPosition<N> {
     }
 
     pub fn make_null_move(&mut self) -> ChessSquare {
-        self.hash_key_history.push(self.hash_key);
-        self.hash_key_history_per_search.push(self.hash_key);
+        self.null_move_count += 1;
         self.chess_move_history.push(EMPTY_HISTORY_MOVE);
 
         let saved_enpassant_square = self.enpassant_square;
@@ -379,10 +400,12 @@ impl<N: Network> ChessPosition<N> {
     }
 
     pub fn unmake_null_move(&mut self, saved_enpassant_square: ChessSquare) {
+        self.null_move_count -= 1;
         self.chess_move_history.pop();
-        self.hash_key_history_per_search.pop();
-        self.hash_key = self.hash_key_history.pop().unwrap();
+
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
         self.player ^= BLACK;
+        self.hash_key ^= PLAYER_HASH[self.player as usize];
 
         self.enpassant_square = saved_enpassant_square;
 
@@ -392,8 +415,10 @@ impl<N: Network> ChessPosition<N> {
     }
 
     pub fn make_move(&mut self, chess_move: &ChessMove) -> RecoverablePositionState {
-        self.hash_key_history.push(self.hash_key);
-        self.hash_key_history_per_search.push(self.hash_key);
+        self.hash_key_history.push((
+            self.hash_key,
+            self.white_all_bitboard | self.black_all_bitboard,
+        ));
 
         let saved_enpassant_square = self.enpassant_square;
         let saved_castling_flag = self.castling_flag;
@@ -690,8 +715,7 @@ impl<N: Network> ChessPosition<N> {
 
     pub fn unmake_move(&mut self, chess_move: &ChessMove, saved_state: RecoverablePositionState) {
         self.chess_move_history.pop();
-        self.hash_key_history_per_search.pop();
-        self.hash_key = self.hash_key_history.pop().unwrap();
+        self.hash_key = self.hash_key_history.pop().unwrap().0;
 
         self.full_move_count -= 1;
         self.half_move_count = saved_state.saved_half_move_count;
