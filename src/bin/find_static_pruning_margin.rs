@@ -1,5 +1,16 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use shallow_guess::chess_move_gen::is_in_check;
 use shallow_guess::chess_position::ChessPosition;
@@ -7,6 +18,8 @@ use shallow_guess::def::{DRAW_SCORE, STACK_SIZE_BYTES, TERMINATE_SCORE};
 use shallow_guess::network::QuantizedNetwork;
 use shallow_guess::search_engine::SearchEngine;
 use shallow_guess::transpos::{TranspositionTable, DEFAULT_HASH_SIZE_MB};
+use shallow_guess::types::Score;
+use std::array;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::thread;
@@ -32,7 +45,7 @@ fn main() -> std::io::Result<()> {
             let transposition_table = TranspositionTable::new(DEFAULT_HASH_SIZE_MB);
             let mut search_engine = SearchEngine::new(transposition_table);
 
-            let mut potential_drops_stats = Vec::new();
+            let mut potential_drops_stats: [Vec<Score>; 15] = array::from_fn(|_| Vec::new());
             let mut processed_position_count = 0;
             let mut skipped_in_check_position_count = 0;
             let mut skipped_high_static_position_count = 0;
@@ -65,7 +78,8 @@ fn main() -> std::io::Result<()> {
 
                 if search_score < static_score {
                     let diff = static_score - search_score;
-                    potential_drops_stats.push(diff);
+                    let piece_count = chess_position.get_piece_count() as usize;
+                    potential_drops_stats[piece_count].push(diff);
                 }
 
                 processed_position_count += 1;
@@ -76,7 +90,7 @@ fn main() -> std::io::Result<()> {
                     println!();
 
                     println!("Potential Drops:");
-                    print_statistics(&potential_drops_stats);
+                    print_statistics_per_piece_count(&potential_drops_stats);
                     println!();
                 }
             }
@@ -86,7 +100,7 @@ fn main() -> std::io::Result<()> {
             println!();
 
             println!("Potential Drops:");
-            print_statistics(&potential_drops_stats);
+            print_statistics_per_piece_count(&potential_drops_stats);
         })
         .unwrap()
         .join()
@@ -118,28 +132,52 @@ fn read_fen_positions(file_path: &str) -> Vec<String> {
     fens
 }
 
-fn print_statistics(stats: &Vec<i32>) {
+fn compute_stats(stats: &[Score]) -> Option<(Score, Score, Score, Score, Score, usize)> {
     if stats.is_empty() {
-        return;
+        return None;
     }
-
-    let mut sorted_stats = stats.clone();
+    let mut sorted_stats = stats.to_vec();
     sorted_stats.sort();
-
     let max_val = sorted_stats[sorted_stats.len() - 1];
-
     let p95_idx = ((stats.len() as f64 * 0.95).floor() as usize).saturating_sub(1);
     let p99_idx = ((stats.len() as f64 * 0.99).floor() as usize).saturating_sub(1);
     let p99_9_idx = ((stats.len() as f64 * 0.999).floor() as usize).saturating_sub(1);
     let p99_99_idx = ((stats.len() as f64 * 0.9999).floor() as usize).saturating_sub(1);
+    let p95 = sorted_stats[p95_idx];
+    let p99 = sorted_stats[p99_idx];
+    let p99_9 = sorted_stats[p99_9_idx];
+    let p99_99 = sorted_stats[p99_99_idx];
+    Some((max_val, p99_99, p99_9, p99, p95, stats.len()))
+}
 
-    let p95 = sorted_stats[p95_idx] as f64;
-    let p99 = sorted_stats[p99_idx] as f64;
-    let p99_9 = sorted_stats[p99_9_idx] as f64;
-    let p99_99 = sorted_stats[p99_99_idx] as f64;
+fn print_statistics_per_piece_count(stats_per_piece: &[Vec<Score>; 15]) {
+    println!("┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐");
+    println!("│ Pieces  │ Samples │   Max   │ P99.99  │ P99.9   │   P99   │   P95   │");
+    println!("├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤");
 
-    println!(
-        "max={}, p99.99={:.2}, p99.9={:.2}, p99={:.2}, p95={:.2}",
-        max_val, p99_99, p99_9, p99, p95
-    );
+    for piece_count in 0..15 {
+        let stats = &stats_per_piece[piece_count];
+        if let Some((max_val, p99_99, p99_9, p99, p95, count)) = compute_stats(stats) {
+            println!(
+                "│ {:^7} │ {:^7} │ {:^7} │ {:^7} │ {:^7} │ {:^7} │ {:^7} │",
+                piece_count, count, max_val, p99_99, p99_9, p99, p95
+            );
+        }
+    }
+
+    println!("├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤");
+
+    let all_stats: Vec<Score> = stats_per_piece
+        .iter()
+        .flat_map(|v| v.iter())
+        .cloned()
+        .collect();
+    if let Some((max_val, p99_99, p99_9, p99, p95, count)) = compute_stats(&all_stats) {
+        println!(
+            "│ {:^7} │ {:^7} │ {:^7} │ {:^7} │ {:^7} │ {:^7} │ {:^7} │",
+            "ALL", count, max_val, p99_99, p99_9, p99, p95
+        );
+    }
+
+    println!("└─────────┴─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘");
 }

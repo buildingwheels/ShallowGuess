@@ -1,11 +1,23 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use crate::def::{
     A1, A2, A3, A4, A5, A6, A7, A8, B1, B2, B3, B4, B5, B6, B7, B8, BB, BK, BN, BP, BQ, BR, C1, C2,
     C3, C4, C5, C6, C7, C8, CHESS_SQUARE_COUNT, D1, D2, D3, D4, D5, D6, D7, D8, E1, E2, E3, E4, E5,
     E6, E7, E8, F1, F2, F3, F4, F5, F6, F7, F8, FILE_A, FILE_H, G1, G2, G3, G4, G5, G6, G7, G8, H1,
-    H2, H3, H4, H5, H6, H7, H8, NO_PIECE, PIECE_TYPE_COUNT, WB, WK, WN, WP, WQ, WR,
+    H2, H3, H4, H5, H6, H7, H8, NO_PIECE, PIECE_TYPE_COUNT, TERMINATE_SCORE, WB, WK, WN, WP, WQ,
+    WR,
 };
 use crate::network::NetworkIntValue;
 use crate::types::{BitBoard, ChessFile, ChessPiece, ChessRank, ChessSquare};
@@ -222,6 +234,19 @@ macro_rules! process_occupied_indices_breakable {
 
         result
     }};
+}
+
+pub const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
+pub const WIN_PROBABILITY_EPSILON: f32 = 1e-7;
+
+pub fn win_probability_to_centi_pawn_score(win_probability: f32) -> i32 {
+    let clamped = win_probability.clamp(WIN_PROBABILITY_EPSILON, 1.0 - WIN_PROBABILITY_EPSILON);
+    let odds = clamped / (1.0 - clamped);
+    let log_odds = odds.ln();
+
+    let score = (log_odds / CENTI_PAWN_SCORE_SCALING_FACTOR) as i32;
+
+    score.min(TERMINATE_SCORE).max(-TERMINATE_SCORE)
 }
 
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>

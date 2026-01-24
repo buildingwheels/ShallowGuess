@@ -35,9 +35,9 @@ A strong chess engine featuring a shallow neural network for evaluation, trained
 - **Counter Move Heuristic**
 - **Follow-up Move Heuristic**
 - **Null Move Pruning with Verification**
+- **Static Pruning**
 - **Late Move Reductions**
 - **SEE Pruning**
-- **Static Pruning**
 - **Zobrist Hashing**
 - **Depth-Preferred Transposition Table with Aging**
 
@@ -50,26 +50,41 @@ A strong chess engine featuring a shallow neural network for evaluation, trained
 
 #### Network Architecture
 
-**Coach Model:**
+##### Coach Model
+The coach model is designed to accurately understand chess positions as much as possible. It is used to annotate the training data to ease the learning process for the player model.
+
 ```mermaid
 graph TD
-    A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares] --> B[Hidden Layer<br/>N neurons<br/>configurable, e.g., 1024]
-    B --> C[Hidden Layer<br/>32 neurons<br/>fixed]
-    C --> D[Output Layer<br/>3 neurons<br/>Win/Draw/Loss probabilities]
+    A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares<br/>reshaped to 12×8×8] --> B[Conv2d Layer 1<br/>32 channels<br/>3×3 kernel]
+    B --> C[BatchNorm 1<br/>32 channels]
+    C --> D[LeakyReLU]
+    D --> E[MaxPool 2×2<br/>output: 32×4×4]
+    E --> F[Conv2d Layer 2<br/>64 channels<br/>3×3 kernel]
+    F --> G[BatchNorm 2<br/>64 channels]
+    G --> H[LeakyReLU]
+    H --> I[MaxPool 2×2<br/>output: 64×2×2]
+    I --> J[Flatten<br/>256 neurons]
+    J --> K[FC Layer 1<br/>N neurons<br/>configurable, e.g., 512, 1024]
+    K --> L[LeakyReLU]
+    L --> M[FC Layer 2<br/>32 neurons<br/>fixed]
+    M --> N[LeakyReLU]
+    N --> O[Output Layer<br/>3 neurons<br/>Win/Draw/Loss probabilities]
 ```
 
-**Player Model:**
+##### Player Model
+The player model is used in real-time chess play and is designed to be simple and efficient.
+
 ```mermaid
 graph TD
     A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares] --> B[Hidden Layer<br/>N neurons<br/>configurable, e.g., 512]
     B --> C[Output Layer<br/>1 neuron<br/>Win probability]
 ```
 
-The network employs simulated quantization-aware training with post-training dynamic quantization (int8) for input-to-hidden layer weights. The `quantize_weights` utility handles the quantization process.
+The player model also employs simulated quantization-aware training with post-training dynamic quantization (int8) for input-to-hidden layer weights. The `quantize_weights` utility handles the quantization process for the final weights.
 
 #### Available Models
 
-The engine includes several pre-trained models which can be found under `resources/models/`.
+The engine includes several pre-trained models that can be found under `resources/models/`.
 
 **Note:** The "Coach-*" models are for intermediate training purposes and should not be used for real-time evaluation (see the Training section).
 

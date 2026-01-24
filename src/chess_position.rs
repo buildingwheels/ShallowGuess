@@ -1,5 +1,16 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use crate::bit_masks::{EMPTY_MASK, SQUARE_MASKS};
 use crate::def::{
@@ -12,13 +23,15 @@ use crate::fen::{
     fen_str_constants, get_chess_piece_from_char, get_chess_square_from_chars,
     CHESS_PIECE_TO_CHESS_PIECE_CHAR_MAP, CHESS_SQUARE_INDEX_TO_STR_MAP,
 };
+use crate::generated::zobrist::{
+    CASTLING_FLAG_HASH, ENPASSANT_SQUARE_HASH, PIECE_SQUARE_HASH, PLAYER_HASH,
+};
 use crate::network::Network;
 use crate::types::{
     CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, ChessSquare, HashKey,
-    HistoryMove, Score, EMPTY_HISTORY_MOVE,
+    HistoryMove, Score, EMPTY_HISTORY_MOVE, MAX_PIECE_COUNT,
 };
 use crate::util::{char_to_digit, digit_to_char, get_file};
-use crate::zobrist::{CASTLING_FLAG_HASH, ENPASSANT_SQUARE_HASH, PIECE_SQUARE_HASH, PLAYER_HASH};
 use crate::{
     def::{CHESS_SQUARE_COUNT, PIECE_TYPE_COUNT},
     types::{BitBoard, ChessPiece, Player},
@@ -343,6 +356,7 @@ impl<N: Network> ChessPosition<N> {
             | self.bitboards[BR as usize]
             | self.bitboards[BQ as usize])
             .count_ones()
+            .min(MAX_PIECE_COUNT)
     }
 
     pub fn get_last_move_from_opponent(&self) -> Option<&HistoryMove> {

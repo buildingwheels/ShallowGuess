@@ -1,5 +1,16 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::cmp::Ordering;
 
@@ -21,6 +32,8 @@ pub type MegaBytes = usize;
 pub type Score = i32;
 pub type HashKey = usize;
 pub type ChessPieceCount = u32;
+
+pub const MAX_PIECE_COUNT: ChessPieceCount = 14;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ChessMoveType {

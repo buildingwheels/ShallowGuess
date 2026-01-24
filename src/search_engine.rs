@@ -1,5 +1,16 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use crate::chess_move_gen::{
     generate_captures_and_promotions, generate_quiet_moves, is_in_check, is_invalid_position,
@@ -16,6 +27,7 @@ use crate::transpos::{HashFlag, TableEntry, TranspositionTable};
 use crate::types::{
     BitBoard, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, HashKey, MilliSeconds,
     NodeCount, Player, Score, SearchDepth, SearchPly, SortableChessMove, EMPTY_CHESS_MOVE,
+    MAX_PIECE_COUNT,
 };
 use crate::uci::print_info;
 use crate::util::u16_sqrt;
@@ -71,8 +83,12 @@ const HISTORY_WEIGHT_SHIFT_FOLLOWUP: usize = 1;
 const DISTANT_HISTORY_WEIGHT_SHIFT: usize = 2;
 
 const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 3;
+const NULL_MOVE_VERIFICATION_DEPTH: SearchDepth = 6;
+const NULL_MOVE_PRUNING_MARGIN: Score = 20;
 
-const STATIC_PRUNING_MARGIN: Score = 700;
+const STATIC_PRUNING_MARGINS: [Score; MAX_PIECE_COUNT as usize + 1] = [
+    500, 500, 350, 350, 300, 300, 300, 300, 300, 300, 250, 250, 200, 200, 150,
+];
 
 const ENDGAME_PIECE_COUNT: ChessPieceCount = 6;
 
@@ -428,13 +444,9 @@ impl SearchEngine {
             hash_move = EMPTY_CHESS_MOVE;
         }
 
-        if !on_pv
-            && !in_check
-            && beta < TERMINATE_SCORE
-            && depth == 1
-            && chess_position.get_piece_count() > ENDGAME_PIECE_COUNT
-        {
-            let static_pruning_score = chess_position.get_static_score() - STATIC_PRUNING_MARGIN;
+        if !on_pv && !in_check && beta < TERMINATE_SCORE && depth == 1 {
+            let static_pruning_score = chess_position.get_static_score()
+                - STATIC_PRUNING_MARGINS[chess_position.get_piece_count() as usize];
 
             if static_pruning_score >= beta {
                 self.update_hash(&TableEntry {
@@ -457,7 +469,7 @@ impl SearchEngine {
             && !in_check
             && beta < TERMINATE_SCORE
             && depth >= NULL_MOVE_PRUNING_MIN_DEPTH
-            && chess_position.get_static_score() >= beta
+            && chess_position.get_static_score() - NULL_MOVE_PRUNING_MARGIN >= beta
         {
             let depth_reduction = u16_sqrt(depth << 1) - 1;
 
@@ -475,8 +487,10 @@ impl SearchEngine {
 
             chess_position.unmake_null_move(saved_enpassant_square);
 
-            if scout_score >= beta && scout_score != DRAW_SCORE {
-                if chess_position.get_piece_count() > ENDGAME_PIECE_COUNT {
+            if scout_score - NULL_MOVE_PRUNING_MARGIN >= beta && scout_score != DRAW_SCORE {
+                if depth > NULL_MOVE_VERIFICATION_DEPTH
+                    && chess_position.get_piece_count() >= ENDGAME_PIECE_COUNT
+                {
                     self.update_hash(&TableEntry {
                         key: chess_position.hash_key,
                         safety_check,
@@ -487,7 +501,7 @@ impl SearchEngine {
                         chess_move: EMPTY_CHESS_MOVE,
                     });
 
-                    return scout_score;
+                    return scout_score - NULL_MOVE_PRUNING_MARGIN;
                 }
 
                 let verification_score = self.ab_search(

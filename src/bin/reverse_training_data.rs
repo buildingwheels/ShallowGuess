@@ -1,5 +1,16 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use std::env;
 use std::fs::File;
@@ -8,9 +19,9 @@ use std::io::{LineWriter, Write};
 use shallow_guess::bit_masks::SQUARE_MASKS;
 use shallow_guess::chess_position::ChessPosition;
 use shallow_guess::def::{BK, BP, CASTLING_FLAG_EMPTY, CHESS_SQUARE_COUNT, NO_SQUARE, WHITE, WK};
+use shallow_guess::generated::network_weights::INPUT_LAYER_SIZE;
 use shallow_guess::network::{FastNoOpNetwork, Network};
-use shallow_guess::network_weights::INPUT_LAYER_SIZE;
-use shallow_guess::util::read_lines;
+use shallow_guess::util::{read_lines, win_probability_to_centi_pawn_score};
 
 const ONE_SYMBOL: char = 'X';
 
@@ -45,24 +56,41 @@ fn reverse_training_data(input_file: &str, output_path: &str) {
             }
 
             let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() != 2 {
-                eprintln!(
-                    "Line {}: expected exactly one comma, skipping",
-                    line_num + 1
-                );
+            if parts.len() != 3 {
+                eprintln!("Line {}: expected exactly 2 commas, skipping", line_num + 1);
                 continue;
             }
 
             let encoded = parts[0];
             let result = parts[1];
+            let annotated_score = parts[2];
 
-            match decode_to_fen(encoded) {
-                Ok(fen) => {
+            match (annotated_score.parse::<f32>(), decode_to_fen(encoded)) {
+                (Ok(win_probability), Ok(fen)) => {
+                    let centipawn_score = win_probability_to_centi_pawn_score(win_probability);
+
+                    let result_str = match result.trim() {
+                        "0.0" => "Loss",
+                        "0.5" => "Draw",
+                        "1.0" => "Win",
+                        other_result => panic!("Unexpected result {}", other_result),
+                    };
+
                     writer
-                        .write_all(format!("{},{}\n", fen, result).as_bytes())
+                        .write_all(
+                            format!("{}  Result={} Score={}\n", fen, result_str, centipawn_score)
+                                .as_bytes(),
+                        )
                         .unwrap();
                 }
-                Err(e) => {
+                (Err(_), _) => {
+                    eprintln!(
+                        "Line {}: error parsing annotated win probability '{}'",
+                        line_num + 1,
+                        annotated_score
+                    );
+                }
+                (_, Err(e)) => {
                     eprintln!("Line {}: error decoding: {}", line_num + 1, e);
                 }
             }

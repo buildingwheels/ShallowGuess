@@ -1,20 +1,30 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use crate::def::{CHESS_SQUARE_COUNT, TERMINATE_SCORE, WHITE};
-use crate::network_weights::{
+use crate::def::{CHESS_SQUARE_COUNT, WHITE};
+use crate::generated::network_weights::{
     HIDDEN_LAYER_BIASES, HIDDEN_LAYER_SIZE, HIDDEN_LAYER_TO_OUTPUT_LAYER_WEIGHTS, INPUT_LAYER_SIZE,
     INPUT_LAYER_TO_HIDDEN_LAYER_WEIGHTS, OUTPUT_BIAS, SCALING_FACTOR,
 };
 use crate::types::{ChessPiece, ChessSquare, Player, Score};
-use crate::util::{FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES};
+use crate::util::{
+    win_probability_to_centi_pawn_score, FLIPPED_CHESS_SQUARES, MIRRORED_CHESS_PIECES,
+};
 use std::simd::prelude::*;
 
 pub type NetworkIntValue = i16;
 pub type NetworkFloatValue = f32;
-
-const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
-const WIN_PROBABILITY_EPSILON: f32 = 1e-7;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 const SIMD_F32_LANE_WIDTH: usize = 16;
@@ -399,16 +409,6 @@ impl Network for QuantizedNetwork {
         let win_probability = sigmoid(output);
         win_probability_to_centi_pawn_score(win_probability)
     }
-}
-
-fn win_probability_to_centi_pawn_score(win_probability: NetworkFloatValue) -> Score {
-    let clamped = win_probability.clamp(WIN_PROBABILITY_EPSILON, 1.0 - WIN_PROBABILITY_EPSILON);
-    let odds = clamped / (1.0 - clamped);
-    let log_odds = odds.ln();
-
-    let score = (log_odds / CENTI_PAWN_SCORE_SCALING_FACTOR) as Score;
-
-    score.min(TERMINATE_SCORE).max(-TERMINATE_SCORE)
 }
 
 fn load_default_weights_and_biases(network: &mut QuantizedNetwork) {

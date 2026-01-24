@@ -58,7 +58,7 @@ def evaluate_validation(
     dataloader = DataLoader(
         validation_dataset,
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=True,
         persistent_workers=False,
         collate_fn=mmap_collate_fn,
     )
@@ -256,7 +256,7 @@ if __name__ == "__main__":
             dataloader = DataLoader(
                 dataset,
                 batch_size=args.batch_size,
-                shuffle=False,
+                shuffle=True,
                 persistent_workers=False,
                 collate_fn=mmap_collate_fn,
             )

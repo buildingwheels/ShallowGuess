@@ -1,5 +1,16 @@
-// Copyright (c) 2025 Zixiao Han
-// SPDX-License-Identifier: MIT
+// Copyright 2026 Zixiao Han
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use shallow_guess::def::{
     A8, BLACK, CASTLING_FLAG_BLACK_KING_SIDE, CASTLING_FLAG_BLACK_QUEEN_SIDE, CASTLING_FLAG_EMPTY,
@@ -18,11 +29,15 @@ use std::io::{BufRead, BufReader, Write};
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
-        eprintln!("Usage: {} <fen_file_path> <max_seeds_count>", args[0]);
+        eprintln!(
+            "Usage: {} <fen_file_path> <output_path> <max_seeds_count>",
+            args[0]
+        );
         std::process::exit(1);
     }
 
     let file_path = &args[1];
+    let output_path = &args[2];
     let max_seeds_count = &args[2].parse::<usize>().unwrap();
 
     let fen_positions = read_fen_positions(file_path);
@@ -38,7 +53,7 @@ fn main() {
     );
 
     let tables = ZobristTables::new(best_seed.0);
-    output_zobrist_tables(&tables, best_seed.0);
+    output_zobrist_tables(&tables, best_seed.0, output_path);
 }
 
 #[derive(Clone)]
@@ -389,7 +404,7 @@ fn initialize_from_fen(hasher: &mut ZobristHasher, fen: &str) {
     }
 }
 
-fn output_zobrist_tables(tables: &ZobristTables, seed: u64) {
+fn output_zobrist_tables(tables: &ZobristTables, seed: u64, output_path: &str) {
     let mut output = String::new();
 
     output.push_str("use crate::def::{CASTLING_FLAG_FULL, CHESS_SQUARE_COUNT, PIECE_TYPE_COUNT, PLAYER_COUNT};\n");
@@ -436,7 +451,6 @@ fn output_zobrist_tables(tables: &ZobristTables, seed: u64) {
     }
     output.push_str("];\n\n");
 
-    let output_path = "src/zobrist.rs";
     let mut file = File::create(output_path).expect("Failed to create zobrist.rs file");
     file.write_all(output.as_bytes())
         .expect("Failed to write to zobrist.rs");

@@ -34,7 +34,7 @@ fn load_weights(hidden_layer_size: usize) {
         "resources/quantized_weights/{}.quantized_weights",
         hidden_layer_size
     );
-    let out_file = "src/network_weights.rs";
+    let out_file = "src/generated/network_weights.rs";
 
     let file_content = fs::read_to_string(weights_file).expect("Failed to read model weights file");
 

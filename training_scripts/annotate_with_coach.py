@@ -33,10 +33,7 @@ class MmapFileDataset(Dataset):
         return self.length
 
     def __getitem__(self, idx):
-        if isinstance(idx, slice):
-            return self._get_batch(idx)
-        else:
-            return self._get_single(idx)
+        return self._get_single(idx)
 
     def _get_single(self, idx):
         start_pos = self.offsets[idx]
@@ -78,56 +75,6 @@ class MmapFileDataset(Dataset):
         original_result = float(result_str)
 
         return features, original_result, line
-
-    def _get_batch(self, idx_slice):
-        start_idx = idx_slice.start if idx_slice.start is not None else 0
-        stop_idx = idx_slice.stop if idx_slice.stop is not None else self.length
-        step = idx_slice.step if idx_slice.step is not None else 1
-
-        indices = list(range(start_idx, stop_idx, step))
-        batch_size = len(indices)
-
-        batch_features = torch.zeros((batch_size, 768), dtype=torch.float32)
-        batch_original_results = torch.zeros(batch_size, dtype=torch.float32)
-        batch_original_lines = []
-
-        for i, idx in enumerate(indices):
-            start_pos = self.offsets[idx]
-            end_pos = (
-                self.offsets[idx + 1] if idx + 1 < self.length else self.mmap_obj.size()
-            )
-
-            line_bytes = self.mmap_obj[start_pos:end_pos]
-            line = line_bytes.decode("utf-8").strip()
-            batch_original_lines.append(line)
-
-            last_comma = line.rfind(",")
-            features_part = line[:last_comma]
-            result_part = line[last_comma + 1 :]
-
-            feature_idx = 0
-            current_num = ""
-
-            for ch in features_part:
-                if ch.isdigit():
-                    current_num += ch
-                elif ch == "X":
-                    zero_count = int(current_num) if current_num else 0
-                    feature_idx += zero_count
-                    batch_features[i, feature_idx] = 1.0
-                    feature_idx += 1
-                    current_num = ""
-                else:
-                    raise ValueError(f"Unexpected character '{ch}' in features string")
-
-            if current_num:
-                zero_count = int(current_num)
-                feature_idx += zero_count
-
-            assert feature_idx == 768, f"feature_idx {feature_idx} != 768"
-            batch_original_results[i] = float(result_part)
-
-        return batch_features, batch_original_results, batch_original_lines
 
     def __del__(self):
         self.close()

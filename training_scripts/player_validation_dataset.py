@@ -23,17 +23,11 @@ class PlayerValidationDataset(Dataset):
         self.f = open(file_path, "rb")
         self.mmap_obj = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
 
-    def get_batch_indices(self, indices):
-        return self._get_batch(slice(indices[0], indices[-1] + 1))
-
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx):
-        if isinstance(idx, slice):
-            return self._get_batch(idx)
-        else:
-            return self._get_single(idx)
+        return self._get_single(idx)
 
     def _get_single(self, idx):
         start_pos = self.offsets[idx]
@@ -80,59 +74,6 @@ class PlayerValidationDataset(Dataset):
 
         target = torch.tensor(original_result, dtype=torch.float32)
         return features, target
-
-    def _get_batch(self, idx_slice):
-        start_idx = idx_slice.start if idx_slice.start is not None else 0
-        stop_idx = idx_slice.stop if idx_slice.stop is not None else self.length
-        step = idx_slice.step if idx_slice.step is not None else 1
-
-        indices = list(range(start_idx, stop_idx, step))
-        batch_size = len(indices)
-
-        batch_features = torch.zeros((batch_size, 768), dtype=torch.float32)
-        batch_targets = torch.zeros(batch_size, dtype=torch.float32)
-
-        for i, idx in enumerate(indices):
-            start_pos = self.offsets[idx]
-            end_pos = (
-                self.offsets[idx + 1] if idx + 1 < self.length else self.mmap_obj.size()
-            )
-
-            line_bytes = self.mmap_obj[start_pos:end_pos]
-            line = line_bytes.decode("utf-8").strip()
-
-            parts = line.split(",")
-            if len(parts) != 2:
-                raise ValueError(f"Invalid validation line format: expected 2 columns (features,result), got {len(parts)}: {line}")
-            features_part = parts[0]
-            result_part = parts[1]
-
-            feature_idx = 0
-            current_num = ""
-
-            for ch in features_part:
-                if ch.isdigit():
-                    current_num += ch
-                elif ch == "X":
-                    zero_count = int(current_num) if current_num else 0
-                    feature_idx += zero_count
-                    batch_features[i, feature_idx] = 1.0
-                    feature_idx += 1
-                    current_num = ""
-                else:
-                    raise ValueError(f"Unexpected character '{ch}' in features string")
-
-            if current_num:
-                zero_count = int(current_num)
-                feature_idx += zero_count
-
-            assert feature_idx == 768, f"feature_idx {feature_idx} != 768"
-            original_result = float(result_part)
-            if original_result not in [0.0, 0.5, 1.0]:
-                raise ValueError(f"Invalid result {original_result}")
-            batch_targets[i] = original_result
-
-        return batch_features, batch_targets
 
     def __del__(self):
         self.close()
