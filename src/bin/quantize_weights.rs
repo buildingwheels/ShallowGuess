@@ -31,7 +31,7 @@ fn quantize_to_int8_with_scale(weights: &[f32]) -> (Vec<i8>, f32) {
 
     let qmax = i8::MAX as f32;
 
-    let scale = if max_abs > 1e-6 { max_abs / qmax } else { 1.0 };
+    let scale = max_abs / qmax + 1e-6;
 
     let quantized: Vec<i8> = weights
         .iter()

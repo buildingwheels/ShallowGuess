@@ -28,6 +28,13 @@ use std::path::Path;
 
 pub type NetworkInputs = Vec<NetworkIntValue>;
 
+pub const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
+pub const WIN_PROBABILITY_EPSILON: f32 = 1e-7;
+
+const U16_SQRT_TABLE_SIZE: usize = 512;
+const U16_SQRT_MAX: u16 = 256;
+const U16_SQRT_TABLE: [u16; U16_SQRT_TABLE_SIZE] = precompute_u16_sqrt_table();
+
 #[inline(always)]
 pub const fn get_file(chess_square: ChessSquare) -> ChessFile {
     chess_square & 7
@@ -69,10 +76,6 @@ pub fn char_to_digit(c: char) -> usize {
 pub fn digit_to_char(index: usize) -> char {
     (index as u8 + b'0') as char
 }
-
-const U16_SQRT_TABLE_SIZE: usize = 512;
-const U16_SQRT_MAX: u16 = 256;
-const U16_SQRT_TABLE: [u16; U16_SQRT_TABLE_SIZE] = precompute_u16_sqrt_table();
 
 const fn precompute_u16_sqrt_table() -> [u16; U16_SQRT_TABLE_SIZE] {
     let mut table = [0u16; U16_SQRT_TABLE_SIZE];
@@ -236,9 +239,6 @@ macro_rules! process_occupied_indices_breakable {
     }};
 }
 
-pub const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
-pub const WIN_PROBABILITY_EPSILON: f32 = 1e-7;
-
 pub fn win_probability_to_centi_pawn_score(win_probability: f32) -> i32 {
     let clamped = win_probability.clamp(WIN_PROBABILITY_EPSILON, 1.0 - WIN_PROBABILITY_EPSILON);
     let odds = clamped / (1.0 - clamped);
@@ -247,6 +247,13 @@ pub fn win_probability_to_centi_pawn_score(win_probability: f32) -> i32 {
     let score = (log_odds / CENTI_PAWN_SCORE_SCALING_FACTOR) as i32;
 
     score.min(TERMINATE_SCORE).max(-TERMINATE_SCORE)
+}
+
+pub fn centi_pawn_score_to_win_probability(score: i32) -> f32 {
+    let clamped_score = score.min(TERMINATE_SCORE).max(-TERMINATE_SCORE);
+    let log_odds = clamped_score as f32 * CENTI_PAWN_SCORE_SCALING_FACTOR;
+    let odds = log_odds.exp();
+    odds / (1.0 + odds)
 }
 
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>

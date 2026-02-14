@@ -1,6 +1,6 @@
 # Shallow Guess
 
-A strong chess engine featuring a shallow neural network for evaluation, trained solely on game results.
+A strong chess engine featuring a shallow neural network for evaluation, 100% trained on game results.
 
 ## Table of Contents
 - [Features](#features)
@@ -35,7 +35,6 @@ A strong chess engine featuring a shallow neural network for evaluation, trained
 - **Counter Move Heuristic**
 - **Follow-up Move Heuristic**
 - **Null Move Pruning with Verification**
-- **Static Pruning**
 - **Late Move Reductions**
 - **SEE Pruning**
 - **Zobrist Hashing**
@@ -43,50 +42,21 @@ A strong chess engine featuring a shallow neural network for evaluation, trained
 
 ### Evaluation
 
-- **Partially Quantized Neural Network**
-- **Configurable Architecture**
-- **Training on Game Results Only**
-- **SIMD Optimizations for Inference**
+- **Partially-Quantized Neural Network**
 
 #### Network Architecture
-
-##### Coach Model
-The coach model is designed to accurately understand chess positions as much as possible. It is used to annotate the training data to ease the learning process for the player model.
-
-```mermaid
-graph TD
-    A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares<br/>reshaped to 12×8×8] --> B[Conv2d Layer 1<br/>32 channels<br/>3×3 kernel]
-    B --> C[BatchNorm 1<br/>32 channels]
-    C --> D[LeakyReLU]
-    D --> E[MaxPool 2×2<br/>output: 32×4×4]
-    E --> F[Conv2d Layer 2<br/>64 channels<br/>3×3 kernel]
-    F --> G[BatchNorm 2<br/>64 channels]
-    G --> H[LeakyReLU]
-    H --> I[MaxPool 2×2<br/>output: 64×2×2]
-    I --> J[Flatten<br/>256 neurons]
-    J --> K[FC Layer 1<br/>N neurons<br/>configurable, e.g., 512, 1024]
-    K --> L[LeakyReLU]
-    L --> M[FC Layer 2<br/>32 neurons<br/>fixed]
-    M --> N[LeakyReLU]
-    N --> O[Output Layer<br/>3 neurons<br/>Win/Draw/Loss probabilities]
-```
-
-##### Player Model
-The player model is used in real-time chess play and is designed to be simple and efficient.
 
 ```mermaid
 graph TD
     A[Input Layer<br/>768 neurons<br/>12 piece types × 64 squares] --> B[Hidden Layer<br/>N neurons<br/>configurable, e.g., 512]
-    B --> C[Output Layer<br/>1 neuron<br/>Win probability]
+    B --> C[Output Layer<br/>1 neuron<br/>Game result]
 ```
 
-The player model also employs simulated quantization-aware training with post-training dynamic quantization (int8) for input-to-hidden layer weights. The `quantize_weights` utility handles the quantization process for the final weights.
+The model employs simulated quantization-aware training with post-training dynamic quantization (int8) for input-to-hidden layer weights. The `quantize_weights` utility handles the quantization process for the final weights. The quantized weights are embedded into the compiled binary.
 
 #### Available Models
 
-The engine includes several pre-trained models that can be found under `resources/models/`.
-
-**Note:** The "Coach-*" models are for intermediate training purposes and should not be used for real-time evaluation (see the Training section).
+The engine includes pre-trained models that can be found under `resources/models/`.
 
 #### Switching Models
 
@@ -102,51 +72,29 @@ cargo build --release
 
 ## Training
 
-The neural network is trained on chess game results using a multi-step pipeline that processes PGN data into a training-ready format.
-
-**Data Format:**
-- Training data uses compressed run-length encoding to minimize storage
-- Features are encoded as `[zero_count]X[zero_count]X...` where `X` represents a 1
-- Efficiently compresses sparse 768-dimensional feature vectors
-- Player model training uses hybrid data format combining original game results and coach model annotations
-
-For detailed training steps, refer to **[TrainingGuide.md](TrainingGuide.md)**.
+Refer to **[TrainingGuide.md](./training/TrainingGuide.md)**.
 
 ## Utility Programs
+
+### Filter PGN Games
+The `filter_pgn` utility filters games from a PGN file based on tag=value criteria:
+
+```bash
+cargo run --bin filter_pgn [input.pgn] [output.pgn] [filters]
+```
 
 ### Engine Parameter Testing
 The `param_test` utility evaluates engine parameters against EPD test suites.
 
 ```bash
-cargo run --bin param_test [epd_file] [search_time_secs]
+cargo run --bin param_test [epd_file] [search_time_secs] [repeat_count]
 ```
 
 ### Zobrist Key Generation
 The `zobrist_key_gen` utility generates optimal hash tables by testing multiple random seeds to minimize collisions.
 
 ```bash
-cargo run --bin zobrist_key_gen [fen_file_path] [max_seeds_count]
-```
-
-### Static Pruning Margin Analysis
-The `find_static_pruning_margin` utility analyzes positions to determine optimal static pruning margin by comparing static evaluation scores with 1-ply search results.
-
-```bash
-cargo run --bin find_static_pruning_margin [fen_file_path] [stats_batch_count]
-```
-
-**Parameters:**
-- `fen_file_path`: Input FEN file (CSV format: `fen,result`)
-- `stats_batch_count`: Number of positions to process before printing statistics
-
-**Output:**
-- Statistics on potential score drops (static_score - search_score)
-- Percentile values (p95, p99, p99.9, p99.99) to help set safe pruning margin
-- Positions in check or with terminal scores are automatically filtered out
-
-**Example:**
-```bash
-cargo run --bin find_static_pruning_margin data/filtered_fens.txt 1000
+cargo run --bin zobrist_key_gen [fen_file_path] [output_path] [max_seeds_count]
 ```
 
 ## Build
@@ -229,13 +177,10 @@ cargo build --release
 [pgn-extract](https://www.cs.kent.ac.uk/people/staff/djb/pgn-extract/) was used to extract training positions from PGN files.
 
 ### CCRL (Computer Chess Rating Lists)
-50% of the training data for the latest release version was generated from historical 40/15 games obtained from the CCRL website.
-
-### Lichess Elite Database
-50% of the training data for the latest release version was generated from games obtained from this database.
+All training data for the latest release version was generated from historical 40/15 games obtained from the CCRL website.
 
 ### TCEC (Top Chess Engine Championship)
-Training data generated from [TCEC](https://tcec-chess.com/) tournament games was used to train previous versions and as validation dataset for the current training.
+Validation data was generated from [TCEC](https://tcec-chess.com/) tournament games.
 
 ### Chacha20 by Daniel J. Bernstein
 The pseudo-random number generator implements the Chacha20 algorithm created by Daniel J. Bernstein.

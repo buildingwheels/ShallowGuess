@@ -111,7 +111,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.len() != 4 {
         eprintln!("Usage: {} <input_path> <output_path> <num_files>", args[0]);
-        eprintln!("Example: {} input_data output_data 5", args[0]);
         std::process::exit(1);
     }
 

@@ -33,8 +33,6 @@ pub type Score = i32;
 pub type HashKey = usize;
 pub type ChessPieceCount = u32;
 
-pub const MAX_PIECE_COUNT: ChessPieceCount = 14;
-
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ChessMoveType {
     Regular,

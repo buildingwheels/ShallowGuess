@@ -27,7 +27,6 @@ use crate::transpos::{HashFlag, TableEntry, TranspositionTable};
 use crate::types::{
     BitBoard, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, HashKey, MilliSeconds,
     NodeCount, Player, Score, SearchDepth, SearchPly, SortableChessMove, EMPTY_CHESS_MOVE,
-    MAX_PIECE_COUNT,
 };
 use crate::uci::print_info;
 use crate::util::u16_sqrt;
@@ -72,7 +71,6 @@ const HISTORY_DECAY_THRESHOLD: Score = 1024 * 1024;
 
 const MAX_DEPTH: SearchDepth = 128;
 const MAX_PV_LENGTH: usize = 128;
-const MAX_SEARCH_TIME_MILLIS: MilliSeconds = 3600;
 
 const SORT_PRIORITY_KILLER: Score = 2;
 const SORT_PRIORITY_COUNTER_FOLLOWUP: Score = 1;
@@ -82,13 +80,10 @@ const HISTORY_WEIGHT_SHIFT_COUNTER: usize = 2;
 const HISTORY_WEIGHT_SHIFT_FOLLOWUP: usize = 1;
 const DISTANT_HISTORY_WEIGHT_SHIFT: usize = 2;
 
-const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 3;
-const NULL_MOVE_VERIFICATION_DEPTH: SearchDepth = 6;
+const NULL_MOVE_PRUNING_MIN_DEPTH: SearchDepth = 4;
+const NULL_MOVE_PRUNING_DEPTH_REDUCTION_SHIFT: usize = 2;
+const NULL_MOVE_PRUNING_VERIFICATION_DEPTH: SearchDepth = 8;
 const NULL_MOVE_PRUNING_MARGIN: Score = 20;
-
-const STATIC_PRUNING_MARGINS: [Score; MAX_PIECE_COUNT as usize + 1] = [
-    500, 500, 350, 350, 300, 300, 300, 300, 300, 300, 250, 250, 200, 200, 150,
-];
 
 const ENDGAME_PIECE_COUNT: ChessPieceCount = 6;
 
@@ -335,25 +330,6 @@ impl SearchEngine {
         best_move
     }
 
-    pub fn search_to_depth<N: Network>(
-        &mut self,
-        chess_position: &mut ChessPosition<N>,
-        depth: SearchDepth,
-    ) -> Score {
-        self.search_start_time = Instant::now();
-        self.allowed_search_time = Duration::from_millis(MAX_SEARCH_TIME_MILLIS);
-
-        self.ab_search(
-            chess_position,
-            -MATE_SCORE,
-            MATE_SCORE,
-            NODE_TYPE_PV,
-            is_in_check(chess_position),
-            depth,
-            0,
-        )
-    }
-
     fn ab_search<N: Network>(
         &mut self,
         chess_position: &mut ChessPosition<N>,
@@ -379,6 +355,7 @@ impl SearchEngine {
 
         let safety_check = chess_position.white_all_bitboard | chess_position.black_all_bitboard;
         let age = self.search_iteration_counter;
+        let on_pv = node_type == NODE_TYPE_PV;
 
         if ply > 0 {
             if chess_position.is_material_draw() {
@@ -386,7 +363,7 @@ impl SearchEngine {
                     key: chess_position.hash_key,
                     safety_check,
                     score: DRAW_SCORE,
-                    depth: MAX_DEPTH,
+                    depth,
                     age,
                     flag: HashFlag::Exact,
                     chess_move: EMPTY_CHESS_MOVE,
@@ -395,7 +372,7 @@ impl SearchEngine {
                 return DRAW_SCORE;
             }
 
-            if chess_position.is_repetition_draw() {
+            if chess_position.is_repetition_draw(on_pv) {
                 return DRAW_SCORE;
             }
         }
@@ -408,14 +385,17 @@ impl SearchEngine {
             }
         }
 
-        let on_pv = node_type == NODE_TYPE_PV;
-
-        let hash_move;
+        let mut hash_move = EMPTY_CHESS_MOVE;
 
         if let Some(entry) = self.lookup_hash(chess_position.hash_key, safety_check) {
-            hash_move = entry.chess_move;
+            let is_valid_hash_move = chess_position.is_valid_move_for_position(&entry.chess_move);
 
-            if !on_pv && entry.depth >= depth && entry.score != DRAW_SCORE {
+            if is_valid_hash_move {
+                hash_move = entry.chess_move;
+            }
+
+            if !on_pv && entry.depth >= depth && (is_valid_hash_move || entry.chess_move.is_empty())
+            {
                 match entry.flag {
                     HashFlag::LowBound => {
                         if entry.score >= beta {
@@ -440,27 +420,6 @@ impl SearchEngine {
                     }
                 }
             }
-        } else {
-            hash_move = EMPTY_CHESS_MOVE;
-        }
-
-        if !on_pv && !in_check && beta < TERMINATE_SCORE && depth == 1 {
-            let static_pruning_score = chess_position.get_static_score()
-                - STATIC_PRUNING_MARGINS[chess_position.get_piece_count() as usize];
-
-            if static_pruning_score >= beta {
-                self.update_hash(&TableEntry {
-                    key: chess_position.hash_key,
-                    safety_check,
-                    score: static_pruning_score,
-                    depth,
-                    age,
-                    flag: HashFlag::LowBound,
-                    chess_move: EMPTY_CHESS_MOVE,
-                });
-
-                return static_pruning_score;
-            }
         }
 
         let mut under_mate_threat = false;
@@ -471,7 +430,7 @@ impl SearchEngine {
             && depth >= NULL_MOVE_PRUNING_MIN_DEPTH
             && chess_position.get_static_score() - NULL_MOVE_PRUNING_MARGIN >= beta
         {
-            let depth_reduction = u16_sqrt(depth << 1) - 1;
+            let depth_reduction = depth >> NULL_MOVE_PRUNING_DEPTH_REDUCTION_SHIFT;
 
             let saved_enpassant_square = chess_position.make_null_move();
 
@@ -487,9 +446,10 @@ impl SearchEngine {
 
             chess_position.unmake_null_move(saved_enpassant_square);
 
-            if scout_score - NULL_MOVE_PRUNING_MARGIN >= beta && scout_score != DRAW_SCORE {
-                if depth > NULL_MOVE_VERIFICATION_DEPTH
+            if scout_score - NULL_MOVE_PRUNING_MARGIN >= beta {
+                if depth > NULL_MOVE_PRUNING_VERIFICATION_DEPTH
                     && chess_position.get_piece_count() >= ENDGAME_PIECE_COUNT
+                    && scout_score != DRAW_SCORE
                 {
                     self.update_hash(&TableEntry {
                         key: chess_position.hash_key,
@@ -519,7 +479,7 @@ impl SearchEngine {
                         key: chess_position.hash_key,
                         safety_check,
                         score: verification_score,
-                        depth,
+                        depth: depth - depth_reduction,
                         age,
                         flag: HashFlag::LowBound,
                         chess_move: EMPTY_CHESS_MOVE,
@@ -911,7 +871,7 @@ impl SearchEngine {
                 key: chess_position.hash_key,
                 safety_check,
                 score: DRAW_SCORE,
-                depth: MAX_DEPTH,
+                depth: 0,
                 age,
                 flag: HashFlag::Exact,
                 chess_move: EMPTY_CHESS_MOVE,
@@ -922,16 +882,16 @@ impl SearchEngine {
 
         let on_pv = node_type == NODE_TYPE_PV;
 
-        let hash_move;
+        let mut hash_move = EMPTY_CHESS_MOVE;
 
         if let Some(entry) = self.lookup_hash(chess_position.hash_key, safety_check) {
-            if !is_quiet_chess_move(&entry.chess_move, chess_position) {
+            let is_valid_hash_move = chess_position.is_valid_move_for_position(&entry.chess_move);
+
+            if is_valid_hash_move && !is_quiet_chess_move(&entry.chess_move, chess_position) {
                 hash_move = entry.chess_move;
-            } else {
-                hash_move = EMPTY_CHESS_MOVE;
             }
 
-            if !on_pv && entry.score != DRAW_SCORE {
+            if !on_pv && (is_valid_hash_move || entry.chess_move.is_empty()) {
                 match entry.flag {
                     HashFlag::LowBound => {
                         if entry.score >= beta {
@@ -956,8 +916,6 @@ impl SearchEngine {
                     }
                 }
             }
-        } else {
-            hash_move = EMPTY_CHESS_MOVE;
         }
 
         let original_alpha = alpha;
@@ -1047,12 +1005,6 @@ impl SearchEngine {
 
             let gives_check = is_in_check(chess_position);
 
-            if !on_pv && !gives_check && sortable_chess_move.sort_score < 0 {
-                self.searched_or_pruned_node_count += 1;
-                chess_position.unmake_move(&chess_move, saved_state);
-                continue;
-            }
-
             valid_move_count += 1;
 
             let score = if gives_check {
@@ -1112,9 +1064,6 @@ impl SearchEngine {
                     chess_move,
                 });
 
-                self.update_non_quiet_counter_move(chess_move, chess_position, 0);
-                self.update_non_quiet_followup_move(chess_move, chess_position, 0);
-
                 return score;
             }
 
@@ -1124,8 +1073,6 @@ impl SearchEngine {
 
                 if score > alpha {
                     alpha = score;
-
-                    self.update_non_quiet_followup_move(chess_move, chess_position, 0);
                 }
             }
         }
@@ -1363,10 +1310,6 @@ impl SearchEngine {
         max_depth: usize,
     ) {
         if principal_variation.len() > max_depth {
-            return;
-        }
-
-        if !principal_variation.is_empty() && chess_position.is_repetition_draw() {
             return;
         }
 

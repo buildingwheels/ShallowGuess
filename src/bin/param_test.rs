@@ -26,6 +26,14 @@ use std::{fs, thread};
 fn main() -> std::io::Result<()> {
     let args = std::env::args().collect::<Vec<String>>();
 
+    if args.len() < 3 {
+        eprintln!(
+            "Usage: {} <epd_file> <search_time_secs> [repeat_count]",
+            args[0]
+        );
+        std::process::exit(1);
+    }
+
     let epd_file = &args[1];
     let search_time_secs = args[2].parse::<u64>().unwrap();
 

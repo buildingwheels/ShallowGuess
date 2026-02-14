@@ -171,3 +171,12 @@ pub const DRAW_SCORE: Score = 0;
 pub const PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
     0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
 ];
+
+pub const PIECE_VALS_PLAYER_PERSPECTIVE: [[Score; PIECE_TYPE_COUNT]; PLAYER_COUNT] = [
+    [
+        0, 100, 300, 300, 500, 1000, 10000, -100, -300, -300, -500, -1000, -10000,
+    ],
+    [
+        0, -100, -300, -300, -500, -1000, -10000, 100, 300, 300, 500, 1000, 10000,
+    ],
+];

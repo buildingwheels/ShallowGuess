@@ -1,5 +1,6 @@
 /target
-/.idea
-/training_scripts/__pycache__/
+/training/__pycache__/
 /binaries
+/trainingenv
 /temp
+build.log

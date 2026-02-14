@@ -238,7 +238,8 @@ impl QuantizedNetwork {
                 &self.hidden_layer_to_output_layer_weights[base..base + SIMD_F32_LANE_WIDTH],
             );
 
-            let hidden = (acc_f32 * scaling + bias).simd_max(zero);
+            let pre_activation = acc_f32 * scaling + bias;
+            let hidden = pre_activation.simd_max(zero);  // SIMD ReLU
             dot_product_vec += hidden * weights;
         }
 
@@ -392,8 +393,8 @@ impl Network for QuantizedNetwork {
     }
 
     fn clear_accumulated_layer(&mut self) {
-        self.white_accumulated_layer = [0; HIDDEN_LAYER_SIZE];
-        self.black_accumulated_layer = [0; HIDDEN_LAYER_SIZE];
+        self.white_accumulated_layer.fill(0);
+        self.black_accumulated_layer.fill(0);
     }
 
     fn evaluate(&self, player: Player) -> Score {

@@ -29,7 +29,7 @@ use crate::generated::zobrist::{
 use crate::network::Network;
 use crate::types::{
     CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, ChessSquare, HashKey,
-    HistoryMove, Score, EMPTY_HISTORY_MOVE, MAX_PIECE_COUNT,
+    HistoryMove, Score, EMPTY_HISTORY_MOVE,
 };
 use crate::util::{char_to_digit, digit_to_char, get_file};
 use crate::{
@@ -279,7 +279,7 @@ impl<N: Network> ChessPosition<N> {
         fen
     }
 
-    pub fn is_repetition_draw(&self) -> bool {
+    pub fn is_repetition_draw(&self, requires_three_fold: bool) -> bool {
         if self.half_move_count >= FIFTY_MOVES {
             return true;
         }
@@ -290,6 +290,7 @@ impl<N: Network> ChessPosition<N> {
         let current_hash_key = self.hash_key;
         let current_safe_mask = self.white_all_bitboard | self.black_all_bitboard;
 
+        let mut repeated = false;
         let mut search_index = 0;
 
         loop {
@@ -302,7 +303,15 @@ impl<N: Network> ChessPosition<N> {
             let (hash_key, safe_mask) = self.hash_key_history[full_history_len - search_index];
 
             if current_hash_key == hash_key && current_safe_mask == safe_mask {
-                return true;
+                if !requires_three_fold {
+                    return true;
+                }
+
+                if repeated {
+                    return true;
+                }
+
+                repeated = true;
             }
         }
 
@@ -356,7 +365,38 @@ impl<N: Network> ChessPosition<N> {
             | self.bitboards[BR as usize]
             | self.bitboards[BQ as usize])
             .count_ones()
-            .min(MAX_PIECE_COUNT)
+    }
+
+    pub fn is_valid_move_for_position(&self, chess_move: &ChessMove) -> bool {
+        if chess_move.is_empty() {
+            return false;
+        }
+
+        let moving_piece = self.board[chess_move.from_square];
+
+        if moving_piece == NO_PIECE {
+            return false;
+        }
+
+        if self.player == WHITE && moving_piece > WK {
+            return false;
+        }
+
+        if self.player == BLACK && moving_piece < BP {
+            return false;
+        }
+
+        if chess_move.promotion_piece != NO_PIECE {
+            if chess_move.promotion_piece < WK && moving_piece != WP {
+                return false;
+            }
+
+            if chess_move.promotion_piece > BP && moving_piece != BP {
+                return false;
+            }
+        }
+
+        true
     }
 
     pub fn get_last_move_from_opponent(&self) -> Option<&HistoryMove> {

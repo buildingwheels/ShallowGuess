@@ -28,7 +28,7 @@ use std::io::{BufRead, BufReader, Write};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
+    if args.len() != 4 {
         eprintln!(
             "Usage: {} <fen_file_path> <output_path> <max_seeds_count>",
             args[0]
@@ -38,12 +38,12 @@ fn main() {
 
     let file_path = &args[1];
     let output_path = &args[2];
-    let max_seeds_count = &args[2].parse::<usize>().unwrap();
+    let max_seeds_count = args[3].parse::<usize>().unwrap();
 
     let fen_positions = read_fen_positions(file_path);
     println!("Loaded {} unique FEN positions", fen_positions.len());
 
-    let best_seed = find_best_seed(&fen_positions, *max_seeds_count);
+    let best_seed = find_best_seed(&fen_positions, max_seeds_count);
 
     println!(
         "Best seed: {} with duplicate rate: {:.12}%, collision rate: {:.12}%",

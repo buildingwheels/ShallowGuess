@@ -119,7 +119,7 @@ fn load_weights(hidden_layer_size: usize) {
 
     code.push_str(&format!(
         "pub const SCALING_FACTOR: f32 = {};\n",
-        scaling_factor
+        string_float(scaling_factor)
     ));
 
     let mut file = fs::File::create(out_file).expect("Failed to create weights source file");
