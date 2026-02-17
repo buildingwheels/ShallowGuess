@@ -2,6 +2,8 @@
 
 A strong chess engine featuring a shallow neural network for evaluation, 100% trained on game results.
 
+<img src="./resources/images/logo.png" alt="Shallow Guess Logo" align="left" style="margin-top: 1em; margin-bottom: 1em"/>
+
 ## Table of Contents
 - [Features](#features)
   - [Board Representation and Move Generation](#board-representation-and-move-generation)
@@ -80,8 +82,11 @@ Refer to **[TrainingGuide.md](./training/TrainingGuide.md)**.
 The `filter_pgn` utility filters games from a PGN file based on tag=value criteria:
 
 ```bash
-cargo run --bin filter_pgn [input.pgn] [output.pgn] [filters]
+cargo run --bin filter_pgn [options] [input.pgn] [output.pgn] [filters]
 ```
+
+**Options:**
+- `--filter-if-missing-tag`: Filter out games that don't have the specified tag
 
 ### Engine Parameter Testing
 The `param_test` utility evaluates engine parameters against EPD test suites.

@@ -19,7 +19,6 @@ def load_model(hidden_layer_size, model_file):
 
 
 def export_weights(model, export_file):
-    model.eval()
     with torch.no_grad():
         fc1_w = model.fc1.weight.data
         fc1_b = model.fc1.bias.data

@@ -29,7 +29,6 @@ use shallow_guess::util::read_lines;
 const MAX_PLY: SearchPly = 8;
 
 const DRAW_RESULT: f64 = 0.5;
-const SMOOTHED_LABEL_RANGE: f64 = 0.45;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -97,14 +96,10 @@ fn filter_fen(preprocessed_fen_file: &str, output_file_path: &str, batch_count: 
                 static_kept_count += 1;
             }
 
-            let weighted_result = match result {
-                DRAW_RESULT => DRAW_RESULT,
-                1.0 => DRAW_RESULT + SMOOTHED_LABEL_RANGE * (position_count / total_position_count),
-                0.0 => DRAW_RESULT - SMOOTHED_LABEL_RANGE * (position_count / total_position_count),
-                _ => panic!("Invalid game result {}", result),
-            };
+            let weighted_result =
+                calculate_weighted_result(result, position_count, total_position_count);
 
-            output_batch_buffer.push_str(&format!("{},{}\n", fen, weighted_result));
+            output_batch_buffer.push_str(&format!("{},{:.5}\n", fen, weighted_result));
 
             training_size += 1;
             buffered_line_count += 1;
@@ -135,6 +130,21 @@ fn filter_fen(preprocessed_fen_file: &str, output_file_path: &str, batch_count: 
     println!("Total positions processed: {}", total_positions);
     println!("Positions filtered: {}", non_static_filtered_count);
     println!("Positions kept: {}", static_kept_count);
+}
+
+#[inline(always)]
+fn calculate_weighted_result(result: f64, position_count: f64, total_position_count: f64) -> f64 {
+    if result == DRAW_RESULT {
+        return DRAW_RESULT;
+    }
+
+    let weighted_progress = (position_count / total_position_count).powf(2.);
+
+    match result {
+        1.0 => DRAW_RESULT + DRAW_RESULT * weighted_progress,
+        0.0 => DRAW_RESULT - DRAW_RESULT * weighted_progress,
+        _ => panic!("Invalid game result {}", result),
+    }
 }
 
 fn get_material_score<N: Network>(chess_position: &ChessPosition<N>) -> Score {

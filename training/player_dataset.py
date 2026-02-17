@@ -5,23 +5,40 @@ import torch
 from torch.utils.data import Dataset
 
 
+def print_indexing_progress(current, total, prefix="Indexing", length=30):
+    percent = 100 * (current / float(total)) if total > 0 else 0
+    filled_length = int(length * current // total) if total > 0 else 0
+    bar = "█" * filled_length + "-" * (length - filled_length)
+    print(f"\r{prefix} |{bar}| {percent:.1f}%", end="", flush=True)
+
+
 class MmapFileDataset(Dataset):
-    def __init__(self, file_path):
+    def __init__(self, file_path, show_progress=True):
         self.file_path = file_path
         self.offsets = []
         self.length = 0
 
-        print(f"Indexing file: {file_path}...")
         with open(file_path, "rb") as f:
+            f.seek(0, 2)
+            file_size = f.tell()
+            f.seek(0)
             self.offsets.append(f.tell())
+            update_interval = 10000
+            lines_since_update = 0
             while line_bytes := f.readline():
                 line = line_bytes.decode("utf-8").strip()
                 if line:
                     self.offsets.append(f.tell())
+                lines_since_update += 1
+                if show_progress and lines_since_update >= update_interval:
+                    lines_since_update = 0
+                    print_indexing_progress(f.tell(), file_size, prefix="Indexing")
 
         self.offsets.pop()
         self.length = len(self.offsets)
-        print(f"Indexing complete. Found {self.length} samples.")
+        if show_progress:
+            print_indexing_progress(file_size, file_size, prefix="Indexing")
+            print(f" Found {self.length} samples.")
 
         self.f = open(file_path, "rb")
         self.mmap_obj = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)

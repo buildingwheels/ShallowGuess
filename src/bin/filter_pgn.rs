@@ -18,22 +18,109 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, LineWriter, Write};
 use std::time::Instant;
 
+#[derive(Debug, Clone)]
+enum FilterOp {
+    Eq,
+    Neq,
+    Gt,
+    Lt,
+}
+
+#[derive(Debug, Clone)]
+struct Filter {
+    tag: String,
+    op: FilterOp,
+    value: String,
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 4 {
-        eprintln!("Usage: {} <input.pgn> <output.pgn> <filters>", args[0]);
-        std::process::exit(1);
+    let mut input_file: Option<&str> = None;
+    let mut output_file: Option<&str> = None;
+    let mut filter_str: Option<&str> = None;
+    let mut filter_if_missing_tag = false;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--filter-if-missing-tag" => {
+                filter_if_missing_tag = true;
+            }
+            arg if arg.starts_with("--") => {
+                eprintln!("Unknown argument: {}", arg);
+                std::process::exit(1);
+            }
+            _ => {
+                if input_file.is_none() {
+                    input_file = Some(&args[i]);
+                } else if output_file.is_none() {
+                    output_file = Some(&args[i]);
+                } else if filter_str.is_none() {
+                    filter_str = Some(&args[i]);
+                } else {
+                    eprintln!(
+                        "Usage: {} [options] <input.pgn> <output.pgn> <filters>",
+                        args[0]
+                    );
+                    eprintln!("Options:");
+                    eprintln!("  --filter-if-missing-tag    Filter out games with missing tags (default: false)");
+                    std::process::exit(1);
+                }
+            }
+        }
+        i += 1;
     }
 
-    let input_file = &args[1];
-    let output_file = &args[2];
-    let filter_str = &args[3];
+    let input_file = match input_file {
+        Some(f) => f,
+        None => {
+            eprintln!(
+                "Usage: {} [options] <input.pgn> <output.pgn> <filters>",
+                args[0]
+            );
+            eprintln!("Options:");
+            eprintln!(
+                "  --filter-if-missing-tag    Filter out games with missing tags (default: false)"
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let output_file = match output_file {
+        Some(f) => f,
+        None => {
+            eprintln!(
+                "Usage: {} [options] <input.pgn> <output.pgn> <filters>",
+                args[0]
+            );
+            eprintln!("Options:");
+            eprintln!(
+                "  --filter-if-missing-tag    Filter out games with missing tags (default: false)"
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let filter_str = match filter_str {
+        Some(f) => f,
+        None => {
+            eprintln!(
+                "Usage: {} [options] <input.pgn> <output.pgn> <filters>",
+                args[0]
+            );
+            eprintln!("Options:");
+            eprintln!(
+                "  --filter-if-missing-tag    Filter out games with missing tags (default: false)"
+            );
+            std::process::exit(1);
+        }
+    };
 
     let filters = parse_filters(filter_str);
 
     let start_time = Instant::now();
-    let (matched, total) = filter_pgn(input_file, output_file, &filters);
+    let (matched, total) = filter_pgn(input_file, output_file, &filters, filter_if_missing_tag);
 
     println!(
         "Filtered {} of {} games to {} in {:.2}s",
@@ -44,8 +131,8 @@ fn main() {
     );
 }
 
-fn parse_filters(filter_str: &str) -> HashMap<String, String> {
-    let mut filters = HashMap::new();
+fn parse_filters(filter_str: &str) -> Vec<Filter> {
+    let mut filters = Vec::new();
 
     for part in filter_str.split(';') {
         let part = part.trim();
@@ -53,8 +140,30 @@ fn parse_filters(filter_str: &str) -> HashMap<String, String> {
             continue;
         }
 
-        if let Some((tag, value)) = part.split_once('=') {
-            filters.insert(tag.trim().to_string(), value.trim().to_string());
+        if let Some((tag, value)) = part.split_once("!=") {
+            filters.push(Filter {
+                tag: tag.trim().to_string(),
+                op: FilterOp::Neq,
+                value: value.trim().to_string(),
+            });
+        } else if let Some((tag, value)) = part.split_once('=') {
+            filters.push(Filter {
+                tag: tag.trim().to_string(),
+                op: FilterOp::Eq,
+                value: value.trim().to_string(),
+            });
+        } else if let Some((tag, value)) = part.split_once('>') {
+            filters.push(Filter {
+                tag: tag.trim().to_string(),
+                op: FilterOp::Gt,
+                value: value.trim().to_string(),
+            });
+        } else if let Some((tag, value)) = part.split_once('<') {
+            filters.push(Filter {
+                tag: tag.trim().to_string(),
+                op: FilterOp::Lt,
+                value: value.trim().to_string(),
+            });
         }
     }
 
@@ -64,7 +173,8 @@ fn parse_filters(filter_str: &str) -> HashMap<String, String> {
 fn filter_pgn(
     input_path: &str,
     output_path: &str,
-    filters: &HashMap<String, String>,
+    filters: &[Filter],
+    filter_if_missing_tag: bool,
 ) -> (usize, usize) {
     let file = File::open(input_path).unwrap_or_else(|e| {
         eprintln!("Error opening input file: {}", e);
@@ -94,7 +204,7 @@ fn filter_pgn(
 
         if line.starts_with('[') && line.ends_with(']') {
             if in_moves && !current_game.is_empty() {
-                if matches_filters(&game_tags, filters) {
+                if matches_filters(&game_tags, filters, filter_if_missing_tag) {
                     writer.write_all(current_game.as_bytes()).unwrap();
                     matched_games += 1;
                 }
@@ -126,7 +236,7 @@ fn filter_pgn(
     }
 
     if !current_game.is_empty() {
-        if matches_filters(&game_tags, filters) {
+        if matches_filters(&game_tags, filters, filter_if_missing_tag) {
             writer.write_all(current_game.as_bytes()).unwrap();
             matched_games += 1;
         }
@@ -147,11 +257,38 @@ fn parse_tag_line(line: &str) -> Option<(String, String)> {
     Some((tag.to_string(), value.to_string()))
 }
 
-fn matches_filters(game_tags: &HashMap<String, String>, filters: &HashMap<String, String>) -> bool {
-    for (filter_tag, filter_value) in filters {
-        match game_tags.get(filter_tag) {
-            Some(value) if value == filter_value => continue,
-            _ => return false,
+fn matches_filters(
+    game_tags: &HashMap<String, String>,
+    filters: &[Filter],
+    filter_if_missing_tag: bool,
+) -> bool {
+    for filter in filters {
+        let game_value = match game_tags.get(&filter.tag) {
+            Some(v) => v,
+            None => {
+                if filter_if_missing_tag {
+                    return false;
+                } else {
+                    continue;
+                }
+            }
+        };
+
+        let matches = match filter.op {
+            FilterOp::Eq => game_value == &filter.value,
+            FilterOp::Neq => game_value != &filter.value,
+            FilterOp::Gt => match (game_value.parse::<i64>(), filter.value.parse::<i64>()) {
+                (Ok(gv), Ok(fv)) => gv > fv,
+                _ => false,
+            },
+            FilterOp::Lt => match (game_value.parse::<i64>(), filter.value.parse::<i64>()) {
+                (Ok(gv), Ok(fv)) => gv < fv,
+                _ => false,
+            },
+        };
+
+        if !matches {
+            return false;
         }
     }
     true

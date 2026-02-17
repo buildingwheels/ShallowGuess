@@ -28,7 +28,7 @@ use std::path::Path;
 
 pub type NetworkInputs = Vec<NetworkIntValue>;
 
-pub const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.004;
+pub const CENTI_PAWN_SCORE_SCALING_FACTOR: f32 = 0.003;
 pub const WIN_PROBABILITY_EPSILON: f32 = 1e-7;
 
 const U16_SQRT_TABLE_SIZE: usize = 512;
