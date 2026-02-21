@@ -15,26 +15,42 @@
 use shallow_guess::types::ChessMoveCount;
 use shallow_guess::util::read_lines;
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{LineWriter, Write};
+use std::path::Path;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 5 {
         eprintln!(
-            "Usage: {} <fen_file> <output_file> <skip_count> <max_count>",
+            "Usage: {} <input_dir> <output_dir> <skip_count> <max_count>",
             args[0]
         );
         std::process::exit(1);
     }
 
-    let original_fen_file = &args[1];
-    let output_file = &args[2];
+    let input_dir = &args[1];
+    let output_dir = &args[2];
     let skip_count = args[3].parse::<ChessMoveCount>().unwrap();
     let max_count = args[4].parse::<ChessMoveCount>().unwrap();
 
-    filter_fen_data(original_fen_file, output_file, skip_count, max_count);
+    fs::create_dir_all(output_dir).expect("Failed to create output directory");
+
+    for entry in fs::read_dir(input_dir).expect("Failed to read input directory") {
+        let entry = entry.expect("Failed to read directory entry");
+        let input_path = entry.path();
+
+        if input_path.is_file() {
+            let output_path = Path::new(output_dir).join(entry.file_name());
+            filter_fen_data(
+                input_path.to_str().unwrap(),
+                output_path.to_str().unwrap(),
+                skip_count,
+                max_count,
+            );
+        }
+    }
 }
 
 fn filter_fen_data(
@@ -96,6 +112,20 @@ fn filter_fen_data(
                 }
             }
         }
+
+        if !cached_lines.is_empty() {
+            for line in &cached_lines {
+                file_writer
+                    .write(format!("{},{}\n", line, current_game_position_count).as_bytes())
+                    .unwrap();
+            }
+
+            cached_lines.clear();
+        }
+    }
+
+    for line in &cached_lines {
+        file_writer.write(line.as_bytes()).unwrap();
     }
 
     println!(

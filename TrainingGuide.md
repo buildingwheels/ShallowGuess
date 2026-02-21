@@ -3,15 +3,9 @@
 ## Prerequisites
 
 Before starting the training process, ensure you have:
-- Python 3.10+
-- PyTorch with CUDA support (optional, but recommended for faster training)
 - PGN data for training
 - `pgn-extract` tool for extracting FEN positions from PGN files
-
-Install PyTorch and the required optimizers via:
-```bash
-pip install torch pytorch-optimizer
-```
+- Access to the separate model trainer repository: https://github.com/buildingwheels/ShallowGuessModelTrainer
 
 ## Training Pipeline Overview
 
@@ -20,10 +14,13 @@ The training pipeline follows this sequence:
 ```mermaid
 graph LR
     A[PGN Data] --> B[FEN Extraction]
-    B --> C[Training Data<br/>Generation with Search]
-    C --> D[Model Training]
-    D --> E[Export & Quantize]
-    E --> F[Weights]
+    B --> C[Preprocess FEN Data]
+    C --> D[Filter Static Positions]
+    D --> E[Generate Training Data]
+    E --> F[Model Training<br/>Separate Repository]
+    F --> G[Export Raw Weights]
+    G --> H[Quantize Weights]
+    H --> I[Build Engine]
 ```
 
 ## Training Process
@@ -104,71 +101,66 @@ cargo run --bin gen_training_data data/static_fen.txt data/training_data.txt 100
 
 ### 4. Train Model
 
-Train the model using the generated training data:
+Train the model using the new Rust trainer from the separate repository:
 
 ```bash
-python training/trainer.py [hidden_layer_size] [data_dir] [validation_file] [model_export_path] [max_epochs] [sample_size] [options]
+# Clone the trainer repository
+git clone https://github.com/buildingwheels/ShallowGuessModelTrainer
+cd ShallowGuessModelTrainer
+
+# Build and run the trainer
+cargo run --release --bin train [hidden_layer_size] [data_dir] [validation_file] [model_export_path] [max_epochs] [sample_size] [options]
 ```
 
-### Required Parameters
+**Required Parameters:**
 - `hidden_layer_size`: Size of the hidden layer in the neural network (e.g., 512)
 - `data_dir`: Directory containing the training data files (output from step 3)
 - `validation_file`: Path to validation data file for monitoring training progress
-- `model_export_path`: Path where the trained model will be saved
+- `model_export_path`: Path where the trained model will be saved (will have `.safetensors` extension added)
 - `max_epochs`: Maximum number of training epochs (e.g., 100)
-- `sample_size`: Number of samples to use for training
+- `sample_size`: Number of files to sample from the training data directory each epoch
+- `total_steps`: Total number of training steps
 
-### Optional Parameters
-- `--batch_size`: Batch size for training (default: 32768)
-- `--learning_rate`: Learning rate for optimization (default: 0.01)
-- `--existing_pth_file`: Path to existing model file to continue training
-- `--training_log_file`: Path to the training log file (default: `temp/training_log_player_{hidden_layer_size}.log`)
-- `--enable_diagnostics`: Enable diagnostic output
-- `--fine_tuning`: Use fine-tuning mode (SGD with momentum) instead of standard training (Ranger)
-- `--use_pt_format`: Use pre-converted .pt format instead of text format (faster loading)
-- `--warmup_steps`: Number of warmup steps for learning rate scheduler (default: 16)
-- `total_steps`: Total number of training steps (required positional argument)
-- `--save_cycle`: Save model every N batches, 0 to disable (default: 0)
+**Optional Parameters:**
+- `--batch-size`: Batch size for training (default: 32768)
+- `--learning-rate`: Learning rate for optimization (default: 0.01)
+- `--existing-model`: Path to existing model file to continue training
+- `--warmup-steps`: Number of warmup steps for learning rate scheduler (default: 16)
 
-### Data Format
-The trainer expects text files with the compressed run-length encoded format:
-- Column 1: Compressed run-length encoded features
-- Column 2: Game result (float, 0.0 to 1.0: 0.0 = loss, 0.5 = draw, 1.0 = win)
-
-### Choosing Data Format: Text vs PT
-
-| Format | Pros | Cons | Best For |
-|--------|------|------|----------|
-| **Text** | Compact storage, human-readable | Slower loading (parsed on-the-fly) | Limited disk space |
-| **PT** | Faster training (2-10x faster depending on your CPU,GPU,hard drive) | Larger file size (pre-parsed tensors) | Large disk |
-
-**Text format example:**
+**Example:**
 ```bash
-python training/trainer.py 512 data/ data/validation.txt resources/models/ 50 1000000 --batch_size 64 --learning_rate 0.05 --total_steps 10000
+cargo run --release --bin train 512 data/training/ data/validation.txt models/Player-512 100 50 50000 --batch-size 32768 --learning-rate 0.01
 ```
 
-**PT format example (for faster training):**
-First convert your training data:
+**Note:** The model will be saved as `Player-512.safetensors` in the specified directory.
+
+**Note:** The new Rust trainer replaces the previous PyTorch implementation and provides better performance and integration with the Rust ecosystem.
+
+### 5. Export Raw Weights
+
+After training is complete, you need to export the raw weights from the trained model. The new Rust trainer saves models in a format that needs to be converted to raw weights for quantization:
+
 ```bash
-python training/convert_to_pt.py data/ data_pt/
+# In the ShallowGuessModelTrainer repository
+cargo run --release --bin export [hidden_layer_size] [model_file] [export_file]
 ```
 
-Then train with the `--use_pt_format` flag:
+**Parameters:**
+- `hidden_layer_size`: Size of hidden layer (must match the trained model)
+- `model_file`: Path to the trained model file (output from step 4, with `.safetensors` extension)
+- `export_file`: Path where raw weights will be saved
+
+**Example:**
 ```bash
-python training/trainer.py 512 data_pt/ data_pt/validation.pt resources/models/ 50 1000000 --use_pt_format --total_steps 10000
+cargo run --release --bin export 512 models/Player-512.safetensors ../ShallowGuess/resources/raw_weights/512.raw_weights
 ```
 
-### Model Architecture
-The PlayerModel uses:
-- **Input layer**: 768 features (piece-square representation)
-- **Hidden layer**: Configurable size with `QuantizedLinear` (quantization-aware training) and `LeakyReLU` activation
-- **Output layer**: Single sigmoid output (position evaluation 0-1)
+### 6. Quantize Weights and Build Engine
 
-### 5. Export and Build Weights
-
-After training is complete, export and quantize player model weights:
+Quantize the raw weights and build the engine with the new model:
 
 ```bash
+# In the main ShallowGuess repository
 ./build_scripts/build_weights.sh [hidden_layer_size]
 ```
 
@@ -182,27 +174,26 @@ After training is complete, export and quantize player model weights:
 
 **Build Script Process:**
 1. Updates `config/network.cfg` with the hidden layer size
-2. Exports raw weights using `export_player_model.py` to CSV format
-3. Generates placeholder quantized weights if needed
-4. Quantizes fc1 weights to int8 using the `quantize_weights` Rust binary
-5. Builds the project with native CPU optimizations
+2. Quantizes fc1 weights to int8 using the `quantize_weights` Rust binary
+3. Builds the project with native CPU optimizations
 
 **Model Naming Convention:**
-- Models are saved as `Player-{size}.pth` (e.g., `Player-512.pth`)
+- Raw weights are saved as `[size].raw_weights` in `resources/raw_weights/`
+- Quantized weights are saved as `[size].quantized_weights` in `resources/quantized_weights/`
 
 ## Utility Scripts
 
-### Convert Training Data to PT Format
-Converts text training data to PyTorch tensor format for faster loading:
+### Generate Quantized Weights Placeholder
+Generates placeholder quantized weights for testing or development:
 
 ```bash
-python training/convert_to_pt.py [input_path] [output_path] [--chunk_size SIZE]
+# In the ShallowGuessModelTrainer repository
+cargo run --release --bin gen_quantized_weights_placeholder [hidden_layer_size] [output_file]
 ```
 
 **Parameters:**
-- `input_path`: Input text file or directory
-- `output_path`: Output .pt file or directory
-- `--chunk_size`: Samples per chunk file (default: 1000000)
+- `hidden_layer_size`: Size of hidden layer
+- `output_file`: Path where placeholder quantized weights will be saved
 
 ### Filter PGN Games
 Filters games from a PGN file based on tag=value criteria:
@@ -221,16 +212,22 @@ cargo run --bin filter_pgn [options] [input.pgn] [output.pgn] [filters]
 - `--filter-if-missing-tag`: Filter out games that don't have the specified tag (default: games with missing tags are kept)
 
 ### Build Validation Dataset
-Creates validation datasets by randomly sampling from training data:
+Creates validation datasets by randomly sampling from training data with configurable draw ratio:
 
 ```bash
-cargo run --bin build_validation_dataset [input_file] [output_file] [sample_count]
+cargo run --bin build_validation_dataset [input_file] [output_file] [sample_count] [draw_ratio]
 ```
 
 **Parameters:**
 - `input_file`: Path to the input training data file
 - `output_file`: Path where the validation dataset will be saved
 - `sample_count`: Number of samples to randomly select for validation
+- `draw_ratio`: Fraction of samples that should be draws (0.0 to 1.0, e.g., 0.3 for 30% draws)
+
+**Example:**
+```bash
+cargo run --bin build_validation_dataset data/training.txt data/validation.txt 10000 0.3
+```
 
 ### Blend Training Data
 Randomly blends multiple training data files into new mixed files:

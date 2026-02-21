@@ -38,7 +38,6 @@ A strong chess engine featuring a shallow neural network for evaluation, 100% tr
 - **Follow-up Move Heuristic**
 - **Null Move Pruning with Verification**
 - **Late Move Reductions**
-- **SEE Pruning**
 - **Zobrist Hashing**
 - **Depth-Preferred Transposition Table with Aging**
 
@@ -56,25 +55,28 @@ graph TD
 
 The model employs simulated quantization-aware training with post-training dynamic quantization (int8) for input-to-hidden layer weights. The `quantize_weights` utility handles the quantization process for the final weights. The quantized weights are embedded into the compiled binary.
 
-#### Available Models
+#### Pre-trained Weights
 
-The engine includes pre-trained models that can be found under `resources/models/`.
+The engine includes pre-trained raw weights under `resources/raw_weights/`. These weights are exported from the [ShallowGuessModelTrainer](https://github.com/buildingwheels/ShallowGuessModelTrainer) repository. The build process automatically quantizes these weights and embeds them into the binary.
 
 #### Switching Models
 
 **Note:** For tournament play, use the default model, which offers optimal strength.  
 
-To use a different model, edit `config/network.cfg` and set the `hidden_layer_size`.  
+To use a different hidden layer size:
 
-Then rebuild the engine:
+1. Place the raw weights file at `resources/raw_weights/[size].raw_weights`
+2. Run the build script:
 
 ```bash
-cargo build --release
+./build_scripts/build_weights.sh [size]
 ```
+
+This updates the config, quantizes the weights, and builds the engine.
 
 ## Training
 
-Refer to **[TrainingGuide.md](./training/TrainingGuide.md)**.
+Refer to **[TrainingGuide.md](./TrainingGuide.md)**.
 
 ## Utility Programs
 
@@ -111,9 +113,6 @@ Starting with version 1.0, pre-compiled binaries are no longer provided due to t
 
 #### Prerequisites
 - **Rust Nightly** - Install from [rustup.rs](https://rustup.rs/). Required for portable SIMD support from the standard library.
-- **Git** - For cloning the repository
-- **Python 3.10+ & PyTorch** - Required only for training new models
-- **jq** - For parsing JSON metadata (required by the build script)
 
 **Switch to Rust Nightly:**
 ```bash

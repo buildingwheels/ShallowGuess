@@ -16,20 +16,13 @@ use std::env;
 use std::fs::{self, File};
 use std::io::{LineWriter, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use shallow_guess::chess_move_gen::{
-    generate_captures_and_promotions, is_in_check, is_invalid_position,
+use shallow_guess::util::{
+    read_lines,
 };
-use shallow_guess::chess_position::ChessPosition;
-use shallow_guess::def::{A1, H8, PIECE_VALS_PLAYER_PERSPECTIVE};
-use shallow_guess::network::{FastNoOpNetwork, Network};
-use shallow_guess::types::{Score, SearchPly};
-use shallow_guess::util::read_lines;
-
-const MAX_PLY: SearchPly = 8;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -74,7 +67,7 @@ fn main() {
                 };
                 match task {
                     Ok((input_path, output_path)) => {
-                        filter_fen(
+                        hardening_weights(
                             input_path.to_str().unwrap(),
                             output_path.to_str().unwrap(),
                             batch_size,
@@ -95,21 +88,17 @@ fn main() {
     });
 }
 
-fn filter_fen(preprocessed_fen_file: &str, output_file_path: &str, batch_count: usize) {
+fn hardening_weights(training_data_file: &str, output_file_path: &str, batch_count: usize) {
     let output_file = File::create(output_file_path).unwrap();
     let mut file_writer = LineWriter::new(output_file);
 
     let mut training_size = 0;
     let mut buffered_line_count = 0;
     let mut output_batch_buffer = String::new();
-    let mut total_positions = 0;
-    let mut non_static_filtered_count = 0;
-    let mut static_kept_count = 0;
-    let mut chess_position = ChessPosition::new(FastNoOpNetwork::new());
 
     let start_time = Instant::now();
 
-    if let Ok(lines) = read_lines(preprocessed_fen_file) {
+    if let Ok(lines) = read_lines(training_data_file) {
         for line in lines.flatten() {
             let line = line.trim();
 
@@ -118,42 +107,16 @@ fn filter_fen(preprocessed_fen_file: &str, output_file_path: &str, batch_count: 
             }
 
             let splits = line.split(',').collect::<Vec<&str>>();
-            let fen = splits[0];
-            let result: f32 = splits[1].parse().unwrap();
-            let position_index: f32 = splits[2].parse().unwrap();
-            let total_position_count: f32 = splits[3].parse().unwrap();
+            let features = splits[0].trim();
+            let mut result: f32 = splits[1].parse().unwrap();
 
-            chess_position.set_from_fen(fen);
-
-            total_positions += 1;
-
-            if is_in_check(&chess_position) {
-                non_static_filtered_count += 1;
-                continue;
+            if result > 0.5 {
+                result = 0.99;
+            } else if result < 0.5 {
+                result = 0.01;
             }
 
-            let material_score = get_material_score(&chess_position);
-            let exchange_score =
-                exchange_search(&mut chess_position, material_score, material_score + 1, 0);
-
-            if material_score != exchange_score {
-                non_static_filtered_count += 1;
-                continue;
-            } else {
-                static_kept_count += 1;
-            }
-
-            let result_weight = position_index / total_position_count;
-            let mut weighted_result = 0.5;
-
-            if result == 1.0 {
-                weighted_result += 0.5 * result_weight;
-            } else if result == 0.0 {
-                weighted_result -= 0.5 * result_weight;
-            }
-
-            output_batch_buffer.push_str(&format!("{},{:.2}\n", fen, weighted_result));
-
+            output_batch_buffer.push_str(&format!("{},{}\n", features, result));
             training_size += 1;
             buffered_line_count += 1;
 
@@ -174,72 +137,11 @@ fn filter_fen(preprocessed_fen_file: &str, output_file_path: &str, batch_count: 
     }
 
     println!(
-        "Completed filtering fen data with size {} to: {}, time taken {}seconds",
+        "Completed updating training set with size {} to: {}, time taken {}seconds",
         training_size,
         output_file_path,
         start_time.elapsed().as_secs()
     );
 
-    println!("Total positions processed: {}", total_positions);
-    println!("Positions filtered: {}", non_static_filtered_count);
-    println!("Positions kept: {}", static_kept_count);
-}
-
-fn get_material_score<N: Network>(chess_position: &ChessPosition<N>) -> Score {
-    let mut score = 0;
-
-    let player_index = chess_position.player as usize;
-
-    for chess_square in A1..=H8 {
-        score += PIECE_VALS_PLAYER_PERSPECTIVE[player_index]
-            [chess_position.board[chess_square] as usize];
-    }
-
-    score
-}
-
-fn exchange_search<N: Network>(
-    chess_position: &mut ChessPosition<N>,
-    mut alpha: Score,
-    beta: Score,
-    ply: SearchPly,
-) -> Score {
-    let material_eval = get_material_score(chess_position);
-
-    if ply >= MAX_PLY {
-        return material_eval;
-    }
-
-    if material_eval >= beta {
-        return material_eval;
-    }
-
-    if material_eval > alpha {
-        alpha = material_eval;
-    }
-
-    let mut captures_and_promotions = generate_captures_and_promotions(chess_position);
-
-    while let Some(chess_move) = captures_and_promotions.pop() {
-        let saved_state = chess_position.make_move(&chess_move);
-
-        if is_invalid_position(chess_position) {
-            chess_position.unmake_move(&chess_move, saved_state);
-            continue;
-        }
-
-        let score = -exchange_search(chess_position, -beta, -alpha, ply + 1);
-
-        chess_position.unmake_move(&chess_move, saved_state);
-
-        if score >= beta {
-            return score;
-        }
-
-        if score > alpha {
-            alpha = score;
-        }
-    }
-
-    alpha
+    println!("Final updated training set size: {}", training_size);
 }

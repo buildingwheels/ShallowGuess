@@ -13,8 +13,11 @@
 // limitations under the License.
 
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{LineWriter, Write};
+use std::path::PathBuf;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 use shallow_guess::chess_position::ChessPosition;
@@ -31,19 +34,65 @@ const ONE_SYMBOL: &str = "X";
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 4 {
+    if args.len() != 5 {
         eprintln!(
-            "Usage: {} <processed_fen_file> <output_file> <batch_size>",
+            "Usage: {} <input_dir> <output_dir> <batch_size> <num_threads>",
             args[0]
         );
         std::process::exit(1);
     }
 
-    let processed_fen_file = &args[1];
-    let output_file = &args[2];
+    let input_dir = &args[1];
+    let output_dir = PathBuf::from(&args[2]);
     let batch_size = args[3].parse::<usize>().unwrap();
 
-    generate_training_set(processed_fen_file, output_file, batch_size);
+    fs::create_dir_all(&output_dir).expect("Failed to create output directory");
+
+    let files: Vec<_> = fs::read_dir(input_dir)
+        .expect("Failed to read input directory")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .collect();
+
+    if files.is_empty() {
+        println!("No files found in input directory");
+        return;
+    }
+
+    let num_threads = args[4].parse::<usize>().unwrap().max(1).min(files.len());
+
+    let (tx, rx) = mpsc::channel::<(PathBuf, PathBuf)>();
+    let rx = Arc::new(Mutex::new(rx));
+
+    thread::scope(|s| {
+        for _ in 0..num_threads {
+            let rx = Arc::clone(&rx);
+            s.spawn(move || loop {
+                let task = {
+                    let rx = rx.lock().unwrap();
+                    rx.recv()
+                };
+                match task {
+                    Ok((input_path, output_path)) => {
+                        generate_training_set(
+                            input_path.to_str().unwrap(),
+                            output_path.to_str().unwrap(),
+                            batch_size,
+                        );
+                    }
+                    Err(_) => break,
+                }
+            });
+        }
+
+        for entry in files {
+            let input_path = entry.path();
+            let output_path = output_dir.join(entry.file_name());
+            tx.send((input_path, output_path)).unwrap();
+        }
+
+        drop(tx);
+    });
 }
 
 fn generate_training_set(filtered_fen_file: &str, output_file_path: &str, batch_count: usize) {
@@ -67,7 +116,7 @@ fn generate_training_set(filtered_fen_file: &str, output_file_path: &str, batch_
 
             let splits = line.split(',').collect::<Vec<&str>>();
             let fen = splits[0].trim();
-            let mut result: f64 = splits[1].parse().unwrap();
+            let mut result: f32 = splits[1].parse().unwrap();
 
             chess_position.set_from_fen(fen);
 
