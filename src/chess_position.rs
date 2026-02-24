@@ -279,7 +279,7 @@ impl<N: Network> ChessPosition<N> {
         fen
     }
 
-    pub fn is_repetition_draw(&self, requires_three_fold: bool) -> bool {
+    pub fn is_repetition_draw(&self) -> bool {
         if self.half_move_count >= FIFTY_MOVES {
             return true;
         }
@@ -303,10 +303,6 @@ impl<N: Network> ChessPosition<N> {
             let (hash_key, safe_mask) = self.hash_key_history[full_history_len - search_index];
 
             if current_hash_key == hash_key && current_safe_mask == safe_mask {
-                if !requires_three_fold {
-                    return true;
-                }
-
                 if repeated {
                     return true;
                 }

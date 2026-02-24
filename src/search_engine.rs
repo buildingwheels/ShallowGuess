@@ -372,7 +372,7 @@ impl SearchEngine {
                 return DRAW_SCORE;
             }
 
-            if chess_position.is_repetition_draw(on_pv) {
+            if chess_position.is_repetition_draw() {
                 return DRAW_SCORE;
             }
         }
