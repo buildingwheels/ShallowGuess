@@ -32,6 +32,7 @@ pub type MegaBytes = usize;
 pub type Score = i32;
 pub type HashKey = usize;
 pub type ChessPieceCount = u32;
+pub type GamePhase = u8;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ChessMoveType {

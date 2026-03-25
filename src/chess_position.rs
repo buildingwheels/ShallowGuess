@@ -17,7 +17,8 @@ use crate::def::{
     A1, A8, BB, BK, BLACK, BN, BP, BQ, BR, CASTLING_FLAG_BLACK, CASTLING_FLAG_BLACK_KING_SIDE,
     CASTLING_FLAG_BLACK_QUEEN_SIDE, CASTLING_FLAG_EMPTY, CASTLING_FLAG_WHITE,
     CASTLING_FLAG_WHITE_KING_SIDE, CASTLING_FLAG_WHITE_QUEEN_SIDE, CHESS_FILE_COUNT, D1, D8, F1,
-    F8, FILE_H, G1, G8, H1, H8, NO_PIECE, NO_SQUARE, WB, WHITE, WK, WN, WP, WQ, WR,
+    F8, FILE_H, G1, G8, H1, H8, NO_PIECE, NO_SQUARE, QUEEN_PHASE, ROOK_PHASE, WB, WHITE, WK, WN,
+    WP, WQ, WR,
 };
 use crate::fen::{
     fen_str_constants, get_chess_piece_from_char, get_chess_square_from_chars,
@@ -28,10 +29,10 @@ use crate::generated::zobrist::{
 };
 use crate::network::Network;
 use crate::types::{
-    CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, ChessSquare, HashKey,
-    HistoryMove, Score, EMPTY_HISTORY_MOVE,
+    CastlingFlag, ChessMove, ChessMoveCount, ChessMoveType, ChessPieceCount, ChessSquare,
+    GamePhase, HashKey, HistoryMove, Score, EMPTY_HISTORY_MOVE,
 };
-use crate::util::{char_to_digit, digit_to_char, get_file};
+use crate::util::{char_to_digit, digit_to_char, get_file, u_count_set_bits_u8};
 use crate::{
     def::{CHESS_SQUARE_COUNT, PIECE_TYPE_COUNT},
     types::{BitBoard, ChessPiece, Player},
@@ -351,7 +352,7 @@ impl<N: Network> ChessPosition<N> {
         true
     }
 
-    pub fn get_piece_count(&self) -> ChessPieceCount {
+    pub fn get_non_pawn_piece_count(&self) -> ChessPieceCount {
         (self.bitboards[WN as usize]
             | self.bitboards[WB as usize]
             | self.bitboards[WR as usize]
@@ -361,6 +362,18 @@ impl<N: Network> ChessPosition<N> {
             | self.bitboards[BR as usize]
             | self.bitboards[BQ as usize])
             .count_ones()
+    }
+
+    pub fn get_phase(&self, player: Player) -> GamePhase {
+        if player == WHITE {
+            u_count_set_bits_u8(self.bitboards[WN as usize] | self.bitboards[WB as usize])
+                + u_count_set_bits_u8(self.bitboards[WR as usize]) * ROOK_PHASE
+                + u_count_set_bits_u8(self.bitboards[WQ as usize]) * QUEEN_PHASE
+        } else {
+            u_count_set_bits_u8(self.bitboards[BN as usize] | self.bitboards[BB as usize])
+                + u_count_set_bits_u8(self.bitboards[BR as usize]) * ROOK_PHASE
+                + u_count_set_bits_u8(self.bitboards[BQ as usize]) * QUEEN_PHASE
+        }
     }
 
     pub fn is_valid_move_for_position(&self, chess_move: &ChessMove) -> bool {

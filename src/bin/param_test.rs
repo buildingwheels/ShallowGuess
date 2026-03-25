@@ -70,7 +70,7 @@ fn main() -> std::io::Result<()> {
                 for repeat_count in 0..repeat_search_count {
                     println!("Searching iteration {}", repeat_count);
 
-                    let best_move = &search_engine.search_best_move(
+                    let (best_move, _) = &search_engine.search_best_move(
                         &mut chess_position,
                         Duration::from_secs(search_time_secs),
                         Duration::from_secs(search_time_secs),

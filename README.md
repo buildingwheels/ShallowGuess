@@ -26,6 +26,7 @@ A strong chess engine featuring a shallow neural network for evaluation, 100% tr
 - **Follow-up Move Heuristic**
 - **Null Move Pruning with Verification**
 - **Late Move Reductions**
+- **Static Pruning**
 - **Zobrist Hashing**
 - **Depth-Preferred Transposition Table with Aging**
 

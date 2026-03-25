@@ -63,14 +63,16 @@ impl<N: Network> ChessGame<N> {
         extra_allowed_time_ms: MilliSeconds,
         force_stopped: Arc<AtomicBool>,
     ) -> ChessMove {
-        self.search_engine.search_best_move(
+        let (best_move, _) = self.search_engine.search_best_move(
             &mut self.chess_position,
             Duration::from_millis(allowed_time_ms),
             Duration::from_millis(extra_allowed_time_ms),
             None,
             force_stopped,
             true,
-        )
+        );
+
+        best_move
     }
 
     #[inline(always)]

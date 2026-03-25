@@ -20,47 +20,97 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DRAW_RESULT: f64 = 0.5;
 
+fn reservoir_sample_strings(
+    mut reader: impl BufRead,
+    sample_size: usize,
+    rng: &mut RandGenerator,
+    predicate: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut reservoir: Vec<String> = Vec::with_capacity(sample_size);
+    let mut count: usize = 0;
+
+    loop {
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let line_trimmed = line.trim();
+        if line_trimmed.is_empty() {
+            continue;
+        }
+
+        if !predicate(line_trimmed) {
+            continue;
+        }
+
+        line.pop();
+
+        if count < sample_size {
+            reservoir.push(line);
+        } else {
+            let j = (rng.next_u32() as usize) % (count + 1);
+            if j < sample_size {
+                reservoir[j] = line;
+            }
+        }
+
+        count += 1;
+    }
+
+    Ok(reservoir)
+}
+
+fn is_draw_line(line: &str) -> bool {
+    if let Some(result_str) = line.split(',').nth(1) {
+        if let Ok(result) = result_str.trim().parse::<f64>() {
+            return (result - DRAW_RESULT).abs() < 1e-9;
+        }
+    }
+    false
+}
+
+fn count_lines(input_file: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    let file = File::open(input_file)?;
+    let reader = BufReader::new(file);
+
+    let mut draw_count = 0usize;
+    let mut non_draw_count = 0usize;
+
+    for line in reader.lines() {
+        let line = line?;
+        if is_draw_line(line.trim()) {
+            draw_count += 1;
+        } else {
+            non_draw_count += 1;
+        }
+    }
+
+    Ok((draw_count, non_draw_count))
+}
+
 fn build_validation_dataset(
     input_file: &str,
     output_file: &str,
     num_samples: usize,
     draw_ratio: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let file = File::open(input_file)?;
-    let reader = BufReader::new(file);
-
-    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
-
-    let mut draw_lines: Vec<String> = Vec::new();
-    let mut non_draw_lines: Vec<String> = Vec::new();
-
-    for line in &lines {
-        if let Some(result_str) = line.split(',').nth(1) {
-            if let Ok(result) = result_str.trim().parse::<f64>() {
-                if (result - DRAW_RESULT).abs() < 1e-9 {
-                    draw_lines.push(line.clone());
-                } else {
-                    non_draw_lines.push(line.clone());
-                }
-            }
-        }
-    }
-
     let target_draw_count = (num_samples as f64 * draw_ratio).round() as usize;
     let target_non_draw_count = num_samples - target_draw_count;
 
-    if draw_lines.len() < target_draw_count {
+    let (total_draws, total_non_draws) = count_lines(input_file)?;
+
+    if total_draws < target_draw_count {
         eprintln!(
             "Warning: Requested {} draw samples, but file only has {} draw lines",
-            target_draw_count,
-            draw_lines.len()
+            target_draw_count, total_draws
         );
     }
-    if non_draw_lines.len() < target_non_draw_count {
+    if total_non_draws < target_non_draw_count {
         eprintln!(
             "Warning: Requested {} non-draw samples, but file only has {} non-draw lines",
-            target_non_draw_count,
-            non_draw_lines.len()
+            target_non_draw_count, total_non_draws
         );
     }
 
@@ -70,30 +120,28 @@ fn build_validation_dataset(
         .as_nanos() as u64;
     let mut rng = RandGenerator::new(seed);
 
-    let draw_count = target_draw_count.min(draw_lines.len());
-    let non_draw_count = target_non_draw_count.min(non_draw_lines.len());
+    let draw_count = target_draw_count.min(total_draws);
+    let non_draw_count = target_non_draw_count.min(total_non_draws);
     let actual_samples = draw_count + non_draw_count;
 
-    let mut selected_draw_indices = std::collections::HashSet::new();
-    while selected_draw_indices.len() < draw_count {
-        let index = (rng.next_f64() * draw_lines.len() as f64).floor() as usize;
-        selected_draw_indices.insert(index);
-    }
+    let file = File::open(input_file)?;
+    let reader = BufReader::new(file);
+    let mut draw_reservoir: Vec<String> =
+        reservoir_sample_strings(reader, draw_count, &mut rng, |line| is_draw_line(line))?;
 
-    let mut selected_non_draw_indices = std::collections::HashSet::new();
-    while selected_non_draw_indices.len() < non_draw_count {
-        let index = (rng.next_f64() * non_draw_lines.len() as f64).floor() as usize;
-        selected_non_draw_indices.insert(index);
-    }
+    let file = File::open(input_file)?;
+    let reader = BufReader::new(file);
+    let mut non_draw_reservoir: Vec<String> =
+        reservoir_sample_strings(reader, non_draw_count, &mut rng, |line| !is_draw_line(line))?;
 
     let mut output = File::create(output_file)?;
 
-    for index in selected_draw_indices {
-        writeln!(output, "{}", draw_lines[index])?;
+    for line in draw_reservoir.drain(..) {
+        writeln!(output, "{}", line)?;
     }
 
-    for index in selected_non_draw_indices {
-        writeln!(output, "{}", non_draw_lines[index])?;
+    for line in non_draw_reservoir.drain(..) {
+        writeln!(output, "{}", line)?;
     }
 
     eprintln!(

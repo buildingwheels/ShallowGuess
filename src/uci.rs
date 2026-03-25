@@ -88,31 +88,115 @@ pub fn process_command<N: Network + 'static>(
 }
 
 fn get_target_info() -> String {
-    let mut features = Vec::new();
-
     #[cfg(target_feature = "avx512f")]
-    features.push("AVX512");
-    #[cfg(target_feature = "avx2")]
-    features.push("AVX2");
-    #[cfg(target_feature = "avx")]
-    features.push("AVX");
-    #[cfg(target_feature = "sse4.2")]
-    features.push("SSE4.2");
-    #[cfg(target_feature = "sse4.1")]
-    features.push("SSE4.1");
-    #[cfg(target_feature = "ssse3")]
-    features.push("SSSE3");
-    #[cfg(target_feature = "sse3")]
-    features.push("SSE3");
-    #[cfg(target_feature = "sse2")]
-    features.push("SSE2");
-    #[cfg(target_feature = "neon")]
-    features.push("NEON");
-
-    if features.is_empty() {
+    {
+        return "AVX512".to_string();
+    }
+    #[cfg(all(target_feature = "avx2", not(target_feature = "avx512f")))]
+    {
+        return "AVX2".to_string();
+    }
+    #[cfg(all(
+        target_feature = "avx",
+        not(any(target_feature = "avx512f", target_feature = "avx2"))
+    ))]
+    {
+        return "AVX".to_string();
+    }
+    #[cfg(all(
+        target_feature = "sse4.2",
+        not(any(
+            target_feature = "avx512f",
+            target_feature = "avx2",
+            target_feature = "avx"
+        ))
+    ))]
+    {
+        return "SSE4.2".to_string();
+    }
+    #[cfg(all(
+        target_feature = "sse4.1",
+        not(any(
+            target_feature = "avx512f",
+            target_feature = "avx2",
+            target_feature = "avx",
+            target_feature = "sse4.2"
+        ))
+    ))]
+    {
+        return "SSE4.1".to_string();
+    }
+    #[cfg(all(
+        target_feature = "ssse3",
+        not(any(
+            target_feature = "avx512f",
+            target_feature = "avx2",
+            target_feature = "avx",
+            target_feature = "sse4.2",
+            target_feature = "sse4.1"
+        ))
+    ))]
+    {
+        return "SSSE3".to_string();
+    }
+    #[cfg(all(
+        target_feature = "sse3",
+        not(any(
+            target_feature = "avx512f",
+            target_feature = "avx2",
+            target_feature = "avx",
+            target_feature = "sse4.2",
+            target_feature = "sse4.1",
+            target_feature = "ssse3"
+        ))
+    ))]
+    {
+        return "SSE3".to_string();
+    }
+    #[cfg(all(
+        target_feature = "sse2",
+        not(any(
+            target_feature = "avx512f",
+            target_feature = "avx2",
+            target_feature = "avx",
+            target_feature = "sse4.2",
+            target_feature = "sse4.1",
+            target_feature = "ssse3",
+            target_feature = "sse3"
+        ))
+    ))]
+    {
+        return "SSE2".to_string();
+    }
+    #[cfg(all(
+        target_feature = "neon",
+        not(any(
+            target_feature = "avx512f",
+            target_feature = "avx2",
+            target_feature = "avx",
+            target_feature = "sse4.2",
+            target_feature = "sse4.1",
+            target_feature = "ssse3",
+            target_feature = "sse3",
+            target_feature = "sse2"
+        ))
+    ))]
+    {
+        return "NEON".to_string();
+    }
+    #[cfg(not(any(
+        target_feature = "avx512f",
+        target_feature = "avx2",
+        target_feature = "avx",
+        target_feature = "sse4.2",
+        target_feature = "sse4.1",
+        target_feature = "ssse3",
+        target_feature = "sse3",
+        target_feature = "sse2",
+        target_feature = "neon",
+    )))]
+    {
         "Scalar".to_string()
-    } else {
-        features.join("+")
     }
 }
 

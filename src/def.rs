@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::types::{CastlingFlag, ChessFile, ChessPiece, ChessSquare, Player, Score};
+use crate::types::{CastlingFlag, ChessFile, ChessPiece, ChessSquare, GamePhase, Player, Score};
 
 pub const STACK_SIZE_BYTES: usize = 128 * 1024 * 1024;
 
@@ -168,6 +168,13 @@ pub const MATE_SCORE: Score = 20_000;
 pub const TERMINATE_SCORE: Score = 10_000;
 pub const DRAW_SCORE: Score = 0;
 
+pub const P_VAL: Score = 100;
+pub const N_VAL: Score = 300;
+pub const B_VAL: Score = 300;
+pub const R_VAL: Score = 500;
+pub const Q_VAL: Score = 1000;
+pub const K_VAL: Score = 10000;
+
 pub const PIECE_VALS: [Score; PIECE_TYPE_COUNT] = [
     0, 100, 300, 300, 500, 1000, 10000, 100, 300, 300, 500, 1000, 10000,
 ];
@@ -180,3 +187,23 @@ pub const PIECE_VALS_PLAYER_PERSPECTIVE: [[Score; PIECE_TYPE_COUNT]; PLAYER_COUN
         0, -100, -300, -300, -500, -1000, -10000, 100, 300, 300, 500, 1000, 10000,
     ],
 ];
+
+pub const TOTAL_GAME_PHASE: GamePhase = 12;
+pub const END_GAME_PHASE: GamePhase = 6;
+pub const ROOK_PHASE: GamePhase = 2;
+pub const QUEEN_PHASE: GamePhase = 4;
+
+pub const BUCKET_COUNT: usize = 3;
+
+#[inline(always)]
+pub const fn get_bucket_index(game_phase: GamePhase) -> usize {
+    if game_phase == 0 {
+        return 0;
+    }
+
+    if game_phase >= TOTAL_GAME_PHASE {
+        return BUCKET_COUNT - 1;
+    }
+
+    (game_phase as usize - 1) >> 2
+}

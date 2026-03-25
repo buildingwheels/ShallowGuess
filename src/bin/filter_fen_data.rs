@@ -72,6 +72,7 @@ fn main() {
                     let rx = rx.lock().unwrap();
                     rx.recv()
                 };
+
                 match task {
                     Ok((input_path, output_path)) => {
                         filter_fen(

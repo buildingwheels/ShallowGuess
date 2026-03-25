@@ -68,6 +68,11 @@ pub const fn u_count_set_bits(bit_board: BitBoard) -> usize {
 }
 
 #[inline(always)]
+pub const fn u_count_set_bits_u8(bit_board: BitBoard) -> u8 {
+    bit_board.count_ones() as u8
+}
+
+#[inline(always)]
 pub fn char_to_digit(c: char) -> usize {
     c.to_digit(10).unwrap() as usize
 }

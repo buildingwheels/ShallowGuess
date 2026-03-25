@@ -24,9 +24,16 @@ graph LR
 
 ## Training Process
 
-### 1. Preprocess FEN Data
+### 1. Extract FEN data from PGN
 
-First, run the FEN data preprocessing utility to extract FENs and label each FEN with game result and position count:
+Use `pgn-extract` tool to extract FEN from PGN games:
+```bash
+pgn-extract -Wfen <pgn-file> > <output-fen-file>
+```
+
+### 2. Preprocess FEN Data
+
+Run the FEN data preprocessing utility to extract FENs and label each FEN with game result and position count:
 
 ```bash
 cargo run --bin preprocess_fen_data [input_dir] [output_dir] [skip_count] [max_count]
@@ -54,7 +61,7 @@ cargo run --bin preprocess_fen_data data/fens/ data/preprocessed/ 10 200
 pgn-extract -Wfen -o data/extracted_fens.txt data/games.pgn
 ```
 
-### 2. Filter Non-static FEN Data
+### 3. Filter Non-static FEN Data
 
 Next, filter the preprocessed FEN data to keep only "static" positions (positions that are not in check and have no immediate tactical complications). This step uses an exchange search to determine if positions are static:
 
@@ -82,7 +89,7 @@ This gives positions later in the game more extreme values (closer to 1.0 or 0.0
 cargo run --bin filter_fen_data data/preprocessed/ data/static/ 10000 4
 ```
 
-### 3. Generate Training Data
+### 4. Generate Training Data
 
 Next, generate the training data from the filtered static FEN files. This step converts FEN positions with weighted game results to the compressed training format:
 
@@ -104,7 +111,7 @@ The output file uses a **compressed run-length encoded text format** to minimize
 - If the current player is BLACK, the result is inverted (1.0 - result)
 - This text format compresses the sparse 768-dimensional feature vector efficiently while remaining human-readable.
 
-### 4. Train Model
+### 5. Train Model
 
 Train the model using the new Rust trainer from the separate repository:
 
@@ -114,9 +121,9 @@ git clone https://github.com/buildingwheels/ShallowGuessTrainer
 
 Then follow instructions in `ShallowGuessTrainer` for training and exporting the trained weights.
 
-### 5. Build Engine
-
-Build the engine with the new quantized weights:
+### 6. Build Engine
+1. Switch hidden layer size by modifying `config/network.cfg`
+2. Build the engine with the new quantized weights:
 
 ```bash
 cargo build --release
